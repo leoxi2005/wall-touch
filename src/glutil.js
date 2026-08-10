@@ -1,6 +1,6 @@
-// Minimal WebGL2 helpers for the fluid sim: programs, ping-pong render targets and a
-// fullscreen blit. Deliberately dependency-free — the whole renderer is fullscreen
-// quads, so pulling in three.js would only add the asar packaging trap for nothing.
+// Minimal WebGL2 helpers: programs, ping-pong render targets and a fullscreen blit.
+// Deliberately dependency-free — the whole renderer is fullscreen triangles, so pulling
+// in three.js would only add the asar packaging trap for nothing.
 
 export function createGL(canvas) {
   const gl = canvas.getContext('webgl2', {
@@ -9,15 +9,14 @@ export function createGL(canvas) {
     stencil: false,
     antialias: false,
     preserveDrawingBuffer: false,   // readPixels happens in the same frame as the draw
-    powerPreference: 'high-performance',
-    desynchronized: true
+    powerPreference: 'high-performance'
   });
-  if (!gl) throw new Error('WebGL2 not available');
+  if (!gl) throw new Error('WebGL2 không khả dụng (card đồ hoạ / driver không hỗ trợ hoặc GPU bị tắt)');
   // Half-float is the whole point: RGBA16F is colour-renderable only with this
-  // extension, and unlike full float it is filterable in core WebGL2 (bilinear
-  // sampling is what makes semi-Lagrangian advection smooth).
+  // extension, and unlike full float it is filterable in core WebGL2 — bilinear
+  // sampling is what keeps the wave field smooth when it is magnified to the wall.
   const extCBF = gl.getExtension('EXT_color_buffer_float');
-  if (!extCBF) throw new Error('EXT_color_buffer_float missing — cannot render to RGBA16F');
+  if (!extCBF) throw new Error('Thiếu EXT_color_buffer_float — không render được vào RGBA16F');
   gl.disable(gl.DEPTH_TEST);
   gl.disable(gl.BLEND);
   return gl;
@@ -72,8 +71,8 @@ export class Program {
 }
 
 // wrapS is REPEAT on every sim target: the five walls form a CLOSED pentagon, so the
-// panorama's right edge physically touches its left edge. Ink drifting off wall 5
-// reappearing on wall 1 is not a trick — it is the room's real topology.
+// panorama's right edge physically touches its left edge. A ripple leaving wall 5 and
+// arriving on wall 1 is not a trick — it is the room's real topology.
 export function createFBO(gl, w, h, { filter = gl.LINEAR, wrapS = gl.REPEAT, wrapT = gl.CLAMP_TO_EDGE } = {}) {
   const texture = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0);

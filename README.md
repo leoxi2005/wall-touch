@@ -17,5 +17,7 @@ DEMO=1 RENDER_SCALE=0.5 npm start     # preview + 3 bàn tay giả
 
 **Bridge không phải sửa gì** — preset 12 zone hiện tại đã bắn `/tuongN/pI/x·y·v·id` @30 Hz.
 
+**Windows:** bản `.exe` đã đóng gói sẵn NDI 6.3.2 (x64) bên trong → **không cần cài NDI Runtime**.
+
 Toàn bộ context, bẫy và tham số chỉnh: **[HANDOFF.md](HANDOFF.md)**.
 Thử hướng visual khác: mở `preview/looks.html` bằng trình duyệt.

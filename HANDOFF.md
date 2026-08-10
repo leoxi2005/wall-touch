@@ -147,12 +147,40 @@ gh release create v1.0.1 "release/Wall Touch-1.0.1-arm64.dmg#macOS (Apple Silico
   — phải thấy `[ndi] senders started` và ảnh snap **không đen** (đo: >20% pixel sáng).
   Đây chính là cái bẫy đã hạ Door Portals v1.0.3.
 
+## 7b. 🪟 MÁY SHOW LÀ WINDOWS — đã kiểm được gì từ xa
+
+Không có máy Windows để chạy thử, nhưng **ruột bản CI build đã soi được** (giải nén
+`Wall.Touch-1.0.0-win.zip` rồi đọc bảng import PE của native module):
+
+| kiểm | kết quả |
+|:--|:--|
+| `grandiose.node` kiến trúc | **x64** ✅ |
+| `grandiose.node` phụ thuộc | chỉ `KERNEL32.dll` + **`Processing.NDI.Lib.x64.dll`** (liên kết cứng) |
+| DLL NDI đi kèm app | có, `dist/` cạnh chính `grandiose.node` — **x64, NDI 6.3.2.0, 28.5 MB** |
+| `app.asar` | đủ `src/`, `config.json`, `index.html`, `main.js` |
+
+→ **KHÔNG cần cài NDI Runtime riêng.** DLL nằm ngay cạnh `.node`, mà Node nạp module native
+bằng `LOAD_WITH_ALTERED_SEARCH_PATH` nên Windows tìm phụ thuộc **trong đúng thư mục của
+`.node`**. (Ghi chú cũ trong README Door Portals nói "cần NDI Runtime" — với app này thì không.)
+Nếu on-site vẫn lỗi nạp NDI thì mới cài NDI Tools như phương án dự phòng.
+
+**Vẫn phải kiểm tại chỗ** (không suy từ xa được): fps thật ở 10350×1080 trên RTX 5080, và
+đường xuất NDI nào nhanh hơn — chạy 2 lần rồi so **số hình NDI/giây** (số sau `DOOR-WALL-1=`
+trong dòng `[perf]`, chia 5), **không phải fps**: mặc định (NDI trong renderer) và `set NDI_IPC=1`.
+
+**Xem log trên Windows:** mở Command Prompt ngay trong thư mục cài (bấm thanh địa chỉ,
+gõ `cmd` → Enter) rồi chạy `"Wall Touch.exe"`; hoặc bấm vào cửa sổ app → **Ctrl+Shift+I** → tab
+Console. Đặt biến bằng `set TÊN=1` trước khi chạy, xoá bằng `set TÊN=`.
+
+**Nếu app hỏng lúc khởi động thì KHÔNG còn màn hình đen nữa** — từ v1.0.1 mọi lỗi renderer
+được in đè lên toàn màn hình bằng chữ đỏ đọc được từ xa (`#fatal` trong `index.html`).
+
 ## 8. Còn nợ
 
 1. **Chưa chạy thử với LiDAR thật.** Cần: bật bridge (preset cũ, không sửa) → `npm start` →
    bấm `h`, xem `pkts` tăng và `touches/wall` đúng → chạm cửa **trái tường 2** xem vệt hiện
    bên trái hay phải (nếu ngược thì trục +x của sensor đó lật — xử ở bridge, không sửa app).
-2. **Chưa đo ở full 10350×1080 trên máy show.** Contour là shader full-res, cần xem fps thật.
+2. **Chưa đo ở full 10350×1080 trên máy show** (xem mục 7b). Contour là shader full-res, cần xem fps thật.
    Nếu thiếu: hạ `waves.substeps` hoặc `look.bloomIters` trước, đừng hạ độ phân giải render.
 3. **`npm install` không tải nổi binary Electron** (giải nén hỏng, thiếu `Frameworks`). Đã vá bằng
    cách copy `node_modules/electron/dist` + `path.txt` từ `~/door-portals`. Máy mới mà lỗi lại

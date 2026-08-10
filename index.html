@@ -17,12 +17,34 @@
     }
     #hud.off { display: none; }
     #boot { position: fixed; color: #567; font: 13px ui-monospace, monospace; }
+    /* On the show machine the app is on a projector with no DevTools. A crash must be
+       readable from across the room, not a black wall. */
+    #fatal:empty { display: none; }
+    #fatal {
+      position: fixed; inset: 0; z-index: 100; padding: 6vh 6vw;
+      background: #140406; color: #ffb4b4; overflow: auto;
+      font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
   <div id="boot">WALL TOUCH — loading…</div>
+  <div id="fatal"></div>
   <div id="stage"><canvas id="gl"></canvas></div>
   <div id="hud"></div>
+  <script>
+    // Registered BEFORE the module loads, so even a syntax error in app.js is reported.
+    function fatal(what, err) {
+      var el = document.getElementById('fatal');
+      if (!el || el.textContent) return;
+      el.textContent = 'WALL TOUCH — LỖI KHỞI ĐỘNG\n\n' + what + '\n\n' +
+        ((err && (err.stack || err.message)) || String(err)) +
+        '\n\nChụp màn hình này gửi kỹ thuật. Thử: chạy lại app, hoặc đặt NDI_OFF=1 để loại trừ NDI.';
+      var b = document.getElementById('boot'); if (b) b.remove();
+    }
+    window.addEventListener('error', function (e) { fatal('Lỗi renderer', e.error || e.message); });
+    window.addEventListener('unhandledrejection', function (e) { fatal('Promise bị từ chối', e.reason); });
+  </script>
   <script type="module" src="./src/app.js"></script>
 </body>
 </html>
