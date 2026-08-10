@@ -122,7 +122,8 @@
       0.35
     ],
     "coastGlow": 0.35,
-    "lightSpin": 0.02
+    "lightSpin": 0.02,
+    "foam": 1.15
   },
   "idle": {
     "afterSeconds": 18,
@@ -151,5 +152,31 @@
     "trailDwell": 0.3,
     "maxStamps": 14,
     "wakeMax": 0.12
+  },
+  "motes": {
+    "count": 2600,
+    "size": 0.01,
+    "brightness": 0.85,
+    "drift": 0.01,
+    "damping": 1.4,
+    "reach": 0.55,
+    "pull": 0.55,
+    "swirl": 0.75,
+    "excite": 3.2
+  },
+  "bridge": {
+    "maxDist": 1.3,
+    "ink": 0.55,
+    "maxStamps": 10
+  },
+  "bubbles": {
+    "max": 700,
+    "rate": 14.0,
+    "life": 3.0,
+    "rise": 0.16,
+    "wobble": 0.02,
+    "spread": 0.07,
+    "size": 0.016,
+    "brightness": 0.8
   }
 }

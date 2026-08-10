@@ -174,6 +174,7 @@ uniform float uSeaDrift;    // how far it breathes up and down
 uniform float uSeaSpeed;
 uniform vec3 uLand;         // colour of ground that has risen above the water
 uniform float uCoast;       // brightness of the shoreline itself
+uniform float uFoam;        // extra shore brightness where waves are breaking on it
 uniform float uLightSpin;
 
 // Four taps on the diagonals of one sim texel. The simulation runs at a fraction of the
@@ -263,7 +264,13 @@ void main() {
   vec3 surface = mix(ramp, uLand * (0.55 + 0.75 * h), land);
   vec3 c = surface * (uAmbient + uShade * diff);
   c += vec3(0.80, 0.93, 1.00) * spec * uSpec * (0.35 + 0.65 * (1.0 - land));
-  c += vec3(0.86, 0.97, 1.00) * coast * uCoast;
+  // Surf. The shoreline is exactly where a travelling ripple becomes visible as an
+  // event rather than a shape, so brightening the coast by the LOCAL WAVE AMPLITUDE
+  // makes every wave arrive somewhere. A speckle scrolling along the shore keeps it from
+  // reading as a uniform neon outline.
+  float surf = smoothstep(0.01, 0.16, abs(wave));
+  float speck = 0.65 + 0.35 * vnoise(vec2(vUv.x * uAspect * 26.0 - uTime * 0.9, vUv.y * 26.0));
+  c += vec3(0.86, 0.97, 1.00) * coast * (uCoast + uFoam * surf * speck);
 
   // --- lines on top -------------------------------------------------------------
   // A trail marks itself out by COLOUR, at the same brightness as every other line.

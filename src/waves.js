@@ -142,6 +142,7 @@ export class Waves {
       .f('uSeaSpeed', L.seaSpeed)
       .v3('uLand', L.landColor[0], L.landColor[1], L.landColor[2])
       .f('uCoast', L.coastGlow)
+      .f('uFoam', L.foam)
       .f('uLightSpin', L.lightSpin);
     this.blit(this.scene);
 

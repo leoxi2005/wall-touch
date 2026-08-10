@@ -8,6 +8,7 @@
 import { createGL, makeBlitter } from './glutil.js';
 import { Waves } from './waves.js';
 import { TouchTracker } from './touch.js';
+import { Motes, Bubbles } from './motes.js';
 
 const cfg = await window.api.getConfig();
 document.getElementById('boot')?.remove();
@@ -72,6 +73,9 @@ const waves = new Waves(gl, blit, {
   simScale: Math.max(0.35, Math.min(1, scale))
 });
 
+const motes = new Motes(gl, { cfg: cfg.motes, aspect: ASPECT, height: dh });
+const bubbles = new Bubbles(gl, { cfg: cfg.bubbles, aspect: ASPECT, height: dh });
+
 // ---------------------------------------------------------------- touch colours
 
 // One colour per person, so a room with five hands in it stays readable — you can see
@@ -103,6 +107,10 @@ const lastPos = new Map();
 const ringClock = new Map();
 const colorId = new Map();
 
+// Everything touching the wall right now, rebuilt each frame. The motes and the land
+// bridges both need the whole set, not one track at a time.
+const liveHands = [];
+
 // Tracks that vanished a moment ago, kept just long enough to stitch a stroke back
 // together. See stitchGhost() — this is what stops one continuous hand movement from
 // being drawn as several differently-coloured strokes.
@@ -110,6 +118,7 @@ let ghosts = [];
 
 function applyTouches(dt) {
   const tracks = tracker.update(dt);
+  liveHands.length = 0;
   for (const [, t] of tracks) applyTrack(t, dt);
 
   // Retire state whose track is gone, remembering where it ended.
@@ -200,6 +209,7 @@ function applyTrack(t, dt) {
     colorId.set(t.key, cid);
     const color = colorFor(cid);
 
+    liveHands.push({ x: t.x, y: t.y, color });
     if (g) {
       // Same hand, new id: continue the stroke from where it stopped, and no splash —
       // a hand that never left the wall must not look like a fresh touch.
@@ -216,6 +226,7 @@ function applyTrack(t, dt) {
   }
 
   const color = colorFor(colorId.get(t.key) ?? t.id);
+  liveHands.push({ x: t.x, y: t.y, color });
   paintStroke(t.key, t.x, t.y, color, dt);
 
   // A hand resting on the wall keeps emitting concentric rings, but on a rhythm — every
@@ -276,6 +287,39 @@ function demoUpdate(dt, t) {
     h.x = x; h.y = y;
   }
   return demoHands.length;
+}
+
+// Two people standing near each other get their islands JOINED: material is laid along
+// the line between their hands, so the two land masses grow towards each other and meet
+// in an isthmus. It is the one moment in the piece where the wall shows a relationship
+// between two visitors rather than two independent doodles.
+function bridgeHands(dt) {
+  const B = cfg.bridge;
+  if (!B || liveHands.length < 2) return;
+  for (let i = 0; i < liveHands.length; i++) {
+    for (let j = i + 1; j < liveHands.length; j++) {
+      const a = liveHands[i], b = liveHands[j];
+      let dx = b.x - a.x; dx -= Math.round(dx);
+      const dy = b.y - a.y;
+      const d = Math.hypot(dx * ASPECT, dy);
+      if (d > B.maxDist || d < 1e-3) continue;
+
+      // Fades out as they separate, so the link forms and breaks smoothly instead of
+      // snapping on at a threshold.
+      const strength = 1 - d / B.maxDist;
+      const mix = [
+        (a.color[0] + b.color[0]) * 0.5,
+        (a.color[1] + b.color[1]) * 0.5,
+        (a.color[2] + b.color[2]) * 0.5
+      ];
+      const n = Math.min(B.maxStamps ?? 10, Math.max(2, Math.ceil(d / (W.trailRadius * 0.7))));
+      const amount = B.ink * strength * strength * dt / n;
+      for (let k = 1; k < n; k++) {
+        const f = k / n;
+        waves.deposit((a.x + dx * f + 1) % 1, a.y + dy * f, mix, amount, 1);
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------- idle attract
@@ -445,10 +489,15 @@ function frame() {
   captureCollect();
 
   const touching = applyTouches(dt) + demoUpdate(dt, clock);
+  bridgeHands(dt);
   idleUpdate(dt, clock, touching > 0);
+  motes.update(dt, liveHands);
+  bubbles.update(dt, liveHands);
 
   waves.step(dt);
   waves.render();
+  motes.draw();          // additive, on top of the graded image — NDI picks it up too
+  bubbles.draw();
 
   if (ndiRunning) {
     ndiAccum += dt;

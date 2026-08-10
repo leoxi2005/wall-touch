@@ -74,6 +74,17 @@ Bấm `h` xem HUD: `pkts` phải tăng, `touches/wall` phải khớp số ngư�
 | `wave` | `waveStepFrag` | 3067×320 | **phương trình sóng 2D thật**: lan, phản xạ, giao thoa |
 | `trail` | `trailSplatFrag` | 1/3 lưới sóng | vệt tay đắp lên thành sống núi, phân rã ~7 s |
 
+Trên nữa có 3 lớp **element** vẽ đè (không nằm trong trường độ cao):
+
+| element | file | sinh ra khi nào |
+|:--|:--|:--|
+| **bọt sóng vỗ bờ** | `contourFrag` | bờ biển sáng lên theo biên độ sóng đang đập vào nó |
+| **hạt sáng trôi** (motes) | `motes.js` | luôn có; bị **hút và xoáy quanh tay**, sáng bùng lên khi tay lại gần |
+| **bong bóng** | `motes.js` | **chỉ khi có người chạm** — nổi lên từ chỗ chạm, lắc lư rồi vỡ |
+
+Và `bridgeHands()` trong `app.js`: **hai người đứng gần nhau thì đất của họ nối lại**
+thành eo — vật liệu được đắp dọc đường nối hai bàn tay, mạnh dần khi lại gần.
+
 Rồi `contourFrag` dựng ảnh từ trường tổng đó theo 2 tầng:
 **tầng khối** (đổ bóng theo độ dốc + dải màu theo độ cao — cái làm nó ra "địa hình có
 ánh sáng" thay vì "hình vẽ nét") và **tầng nét** đè lên trên.
@@ -152,6 +163,10 @@ Thêm: **cảnh báo `READ-usage buffer ... discarded the shadow copy`** trong l
 | bờ biển sáng/tối | `look.coastGlow`; màu đất `look.landColor` |
 | đèn quay nhanh/chậm | `look.lightSpin` |
 | nối nét khi bridge đổi id | `osc.stitchRadius` (mét-tường), `osc.stitchSeconds` |
+| bọt vỗ bờ mạnh/nhẹ | `look.foam` |
+| hạt sáng: số lượng/độ sáng/lực hút | `motes.count`, `brightness`, `pull`, `swirl`, `reach` |
+| bong bóng: nhiều/nhanh/to | `bubbles.rate`, `rise`, `size`, `life` |
+| hai người nối đất | `bridge.maxDist` (mét-tường), `bridge.ink` |
 
 Số đo tường lấy từ `config.json → walls` (giống Door Portals) — đổi `px` là crop NDI tự theo.
 
