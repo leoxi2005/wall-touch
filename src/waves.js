@@ -136,7 +136,13 @@ export class Waves {
       .f('uSpec', L.specular)
       .v3('uDeep', L.rampDeep[0], L.rampDeep[1], L.rampDeep[2])
       .v3('uMid', L.rampMid[0], L.rampMid[1], L.rampMid[2])
-      .v3('uHigh', L.rampHigh[0], L.rampHigh[1], L.rampHigh[2]);
+      .v3('uHigh', L.rampHigh[0], L.rampHigh[1], L.rampHigh[2])
+      .f('uSeaLevel', L.seaLevel)
+      .f('uSeaDrift', L.seaDrift)
+      .f('uSeaSpeed', L.seaSpeed)
+      .v3('uLand', L.landColor[0], L.landColor[1], L.landColor[2])
+      .f('uCoast', L.coastGlow)
+      .f('uLightSpin', L.lightSpin);
     this.blit(this.scene);
 
     this.pPrefilter.use()

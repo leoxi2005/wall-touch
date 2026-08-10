@@ -70,7 +70,9 @@
     "pointRule": "^/tuong(\\d+)/p(\\d+)/(on|x|y|v|id)$",
     "countRule": "^/tuong(\\d+)/count$",
     "flipY": true,
-    "trackTimeout": 0.5
+    "trackTimeout": 0.5,
+    "stitchSeconds": 0.7,
+    "stitchRadius": 0.3
   },
   "look": {
     "exposure": 1.25,
@@ -110,7 +112,17 @@
       0.105,
       0.25,
       0.39
-    ]
+    ],
+    "seaLevel": 0.0,
+    "seaDrift": 0.18,
+    "seaSpeed": 0.055,
+    "landColor": [
+      0.13,
+      0.29,
+      0.35
+    ],
+    "coastGlow": 0.35,
+    "lightSpin": 0.02
   },
   "idle": {
     "afterSeconds": 18,
@@ -128,13 +140,13 @@
     "ringAmp": 0.22,
     "ringInterval": 0.5,
     "wakeAmp": 1.6,
-    "trailHold": 7.0,
+    "trailHold": 2.6,
     "trailCap": 1.0,
     "contours": 26,
     "majorEvery": 5,
     "baseAmp": 0.55,
     "waveGain": 1.0,
-    "trailGain": 1.15,
+    "trailGain": 0.9,
     "trailInk": 0.25,
     "trailDwell": 0.3,
     "maxStamps": 14,

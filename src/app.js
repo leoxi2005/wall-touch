@@ -98,20 +98,54 @@ const tracker = new TouchTracker(walls, cfg.osc ?? {});
 window.api.onOsc((msg) => tracker.handle(msg));
 
 // Per-track state the tracker has no business knowing about: where this hand was on the
-// previous sample, and when it last sent out a ring.
+// previous sample, when it last sent out a ring, and which colour it owns.
 const lastPos = new Map();
 const ringClock = new Map();
+const colorId = new Map();
+
+// Tracks that vanished a moment ago, kept just long enough to stitch a stroke back
+// together. See stitchGhost() — this is what stops one continuous hand movement from
+// being drawn as several differently-coloured strokes.
+let ghosts = [];
 
 function applyTouches(dt) {
   const tracks = tracker.update(dt);
   for (const [, t] of tracks) applyTrack(t, dt);
-  // Drop state whose track is gone, or these maps grow all night.
+
+  // Retire state whose track is gone, remembering where it ended.
   if (ringClock.size > tracks.size) {
-    for (const k of ringClock.keys()) {
-      if (!tracks.has(k)) { ringClock.delete(k); lastPos.delete(k); }
+    for (const k of [...ringClock.keys()]) {
+      if (tracks.has(k)) continue;
+      const p = lastPos.get(k);
+      if (p) ghosts.push({ x: p.x, y: p.y, cid: colorId.get(k), t: clock });
+      ringClock.delete(k); lastPos.delete(k); colorId.delete(k);
     }
   }
+  const keep = (cfg.osc?.stitchSeconds ?? 0.7);
+  if (ghosts.length) ghosts = ghosts.filter(g => clock - g.t < keep);
+
   return tracks.size;
+}
+
+// A hand sliding along the wall does NOT always keep one identity: the bridge can drop
+// and re-acquire it, and crossing a corner hands it to a different sensor entirely,
+// which means a different track id under a different wall prefix. Untreated, one long
+// swipe comes out as several strokes in several colours, each restarting with its own
+// splash.
+//
+// So when a "new" touch appears right where one just disappeared, treat it as the same
+// hand: inherit the colour and carry the stroke on from the old position, so the trail
+// joins up instead of breaking.
+function stitchGhost(x, y) {
+  const rad = cfg.osc?.stitchRadius ?? 0.30;      // wall-heights
+  let best = null, bestD = rad;
+  for (const g of ghosts) {
+    let dx = x - g.x; dx -= Math.round(dx);
+    const d = Math.hypot(dx * ASPECT, y - g.y);
+    if (d < bestD) { bestD = d; best = g; }
+  }
+  if (best) ghosts = ghosts.filter(g => g !== best);
+  return best;
 }
 
 function pointerUv(e) {
@@ -160,17 +194,28 @@ function paintStroke(key, x, y, color, dt) {
 }
 
 function applyTrack(t, dt) {
-  const color = colorFor(t.id);
-
   if (t.fresh) {
-    waves.impulse(t.x, t.y, W.dropAmp, 1.0);
-    waves.deposit(t.x, t.y, color, W.trailInk, 1.2);
-    lastPos.set(t.key, { x: t.x, y: t.y });
+    const g = stitchGhost(t.x, t.y);
+    const cid = g ? g.cid : t.id;
+    colorId.set(t.key, cid);
+    const color = colorFor(cid);
+
+    if (g) {
+      // Same hand, new id: continue the stroke from where it stopped, and no splash —
+      // a hand that never left the wall must not look like a fresh touch.
+      lastPos.set(t.key, { x: g.x, y: g.y });
+      paintStroke(t.key, t.x, t.y, color, dt);
+    } else {
+      waves.impulse(t.x, t.y, W.dropAmp, 1.0);
+      waves.deposit(t.x, t.y, color, W.trailInk, 1.2);
+      lastPos.set(t.key, { x: t.x, y: t.y });
+    }
     ringClock.set(t.key, 0);
     t.fresh = false;
     return;
   }
 
+  const color = colorFor(colorId.get(t.key) ?? t.id);
   paintStroke(t.key, t.x, t.y, color, dt);
 
   // A hand resting on the wall keeps emitting concentric rings, but on a rhythm — every

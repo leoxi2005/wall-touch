@@ -139,7 +139,7 @@ Thêm: **cảnh báo `READ-usage buffer ... discarded the shadow copy`** trong l
 | mặt nước nổi khối nhiều/ít | `look.relief`, `look.shade`, `look.ambient` |
 | lấp lánh trên đỉnh sóng | `look.specular` |
 | tông màu nước (trũng → đỉnh) | `look.rampDeep` / `rampMid` / `rampHigh` |
-| vệt ở lại lâu hơn | `waves.trailHold` (giây, đang 7.0) |
+| vệt ở lại lâu hơn | `waves.trailHold` (giây, đang **2.6**) |
 | sóng lan nhanh hơn | **`waves.substeps`** (đừng đụng `k`) |
 | sóng tắt nhanh/chậm | `waves.damping` (mỗi sub-step) |
 | giọt mạnh hơn khi chạm | `waves.dropAmp`; nhịp vòng khi giữ tay: `ringAmp`/`ringInterval` |
@@ -148,6 +148,10 @@ Thêm: **cảnh báo `READ-usage buffer ... discarded the shadow copy`** trong l
 | nền tĩnh động hơn | `waves.baseAmp` |
 | màu / độ sáng | `look.lineCold`, `look.lineHot`, `look.exposure`, `look.bloomStrength` |
 | bao lâu thì tự thả giọt | `idle.afterSeconds` / `intervalSeconds` |
+| mực nước cao/thấp (nhiều/ít đảo) | `look.seaLevel`, biên độ thở `seaDrift`, nhịp `seaSpeed` |
+| bờ biển sáng/tối | `look.coastGlow`; màu đất `look.landColor` |
+| đèn quay nhanh/chậm | `look.lightSpin` |
+| nối nét khi bridge đổi id | `osc.stitchRadius` (mét-tường), `osc.stitchSeconds` |
 
 Số đo tường lấy từ `config.json → walls` (giống Door Portals) — đổi `px` là crop NDI tự theo.
 
@@ -200,6 +204,23 @@ Console. Đặt biến bằng `set TÊN=1` trước khi chạy, xoá bằng `set
 
 **Nếu app hỏng lúc khởi động thì KHÔNG còn màn hình đen nữa** — từ v1.0.1 mọi lỗi renderer
 được in đè lên toàn màn hình bằng chữ đỏ đọc được từ xa (`#fatal` trong `index.html`).
+
+## 7c. Vệt trail trên tường thật khác gì so với kéo chuột
+
+Cùng một đường code (`paintStroke`) — nhưng có **một chỗ chỉ tường thật mới lộ**:
+
+Bàn tay trượt trên tường **không chắc giữ nguyên một danh tính**. Bridge có thể mất dấu
+rồi bắt lại (id mới), và **đi qua GÓC PHÒNG thì sang hẳn sensor khác** → prefix khác, id
+khác. Không xử lý thì một cú quẹt dài ra thành nhiều nét rời, mỗi nét một màu, mỗi nét
+lại "tõm" một phát như chạm mới.
+
+→ `stitchGhost()` trong `app.js`: track vừa biến mất được giữ lại `stitchSeconds` (0.7 s).
+Nếu có track "mới" xuất hiện trong bán kính `stitchRadius` (0.30 mét-tường ≈ 72 cm) của
+một ghost thì coi là **cùng một bàn tay** — kế thừa màu, nối nét từ vị trí cũ, và **không
+tạo giọt rơi**. Bán kính đó đủ rộng để nuốt cả cú băng qua góc phòng.
+
+**Phải kiểm tại chỗ:** quẹt một đường dài băng qua góc giữa hai tường, xem nét có liền và
+giữ nguyên màu không. Nếu vẫn đứt thì nới `stitchRadius`/`stitchSeconds`.
 
 ## 8. Còn nợ
 

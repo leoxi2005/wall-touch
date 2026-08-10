@@ -169,6 +169,12 @@ uniform float uSpec;
 uniform vec3 uDeep;         // hypsometric ramp: valley → mid → crest
 uniform vec3 uMid;
 uniform vec3 uHigh;
+uniform float uSeaLevel;    // height of the waterline in field units
+uniform float uSeaDrift;    // how far it breathes up and down
+uniform float uSeaSpeed;
+uniform vec3 uLand;         // colour of ground that has risen above the water
+uniform float uCoast;       // brightness of the shoreline itself
+uniform float uLightSpin;
 
 // Four taps on the diagonals of one sim texel. The simulation runs at a fraction of the
 // output size, and a plain bilinear read leaves C0 kinks that contour extraction turns
@@ -226,7 +232,11 @@ void main() {
   // instructions instead of extra taps.
   vec2 slope = vec2(dFdx(f), dFdy(f)) * uRelief;
   vec3 nrm = normalize(vec3(-slope.x, -slope.y, 1.0));
-  vec3 Ldir = normalize(vec3(-0.55, 0.62, 0.56));
+  // The light swings round very slowly (a full turn takes minutes). Nobody watches it
+  // move, but the relief is never lit the same way twice and the room keeps changing
+  // without anything "happening".
+  float la = uTime * uLightSpin;
+  vec3 Ldir = normalize(vec3(cos(la) * 0.62, 0.55 + sin(la) * 0.22, 0.60));
   float diff = clamp(dot(nrm, Ldir), 0.0, 1.0);
   float spec = pow(clamp(reflect(-Ldir, nrm).z, 0.0, 1.0), 26.0);
 
@@ -236,8 +246,24 @@ void main() {
   float h = clamp(f * 0.5 + 0.5, 0.0, 1.0);
   vec3 ramp = h < 0.5 ? mix(uDeep, uMid, h * 2.0) : mix(uMid, uHigh, (h - 0.5) * 2.0);
 
-  vec3 c = ramp * (uAmbient + uShade * diff);
-  c += vec3(0.80, 0.93, 1.00) * spec * uSpec;
+  // --- waterline ----------------------------------------------------------------
+  // One iso-line promoted to a COASTLINE, with everything above it treated as dry land.
+  // This is what turns a field of stripes into readable shapes — islands, straits,
+  // lagoons — and it costs one subtraction, because the trail a hand deposits already
+  // raises the surface: a swipe literally lifts new land out of the water, which then
+  // sinks again as the trail decays.
+  //
+  // The level itself breathes, so the coast is never the same shape twice.
+  float sea = uSeaLevel + uSeaDrift * sin(uTime * uSeaSpeed);
+  float above = f - sea;
+  float aw = fwidth(above) * 1.2;
+  float land = smoothstep(-aw, aw, above);
+  float coast = 1.0 - smoothstep(0.0, aw * 3.0, abs(above));
+
+  vec3 surface = mix(ramp, uLand * (0.55 + 0.75 * h), land);
+  vec3 c = surface * (uAmbient + uShade * diff);
+  c += vec3(0.80, 0.93, 1.00) * spec * uSpec * (0.35 + 0.65 * (1.0 - land));
+  c += vec3(0.86, 0.97, 1.00) * coast * uCoast;
 
   // --- lines on top -------------------------------------------------------------
   // A trail marks itself out by COLOUR, at the same brightness as every other line.
