@@ -116,6 +116,11 @@ window.api.onOsc((msg) => tracker.handle(msg));
 const lastPos = new Map();
 const ringClock = new Map();
 const colorId = new Map();
+// Keys that actually reported a touch THIS frame. Retirement is driven by this rather
+// than by "is it in the tracker's map", because hands can also come from DEMO — and the
+// old test wiped their state every frame, which silently reset the calibration hold
+// timer so a hand could never be held still long enough to be captured.
+const seenKeys = new Set();
 
 // Everything touching the wall right now, rebuilt each frame. The motes, the fish and
 // the land bridges all need the whole set, not one track at a time.
@@ -134,21 +139,24 @@ let ghosts = [];
 function applyTouches(dt) {
   const tracks = tracker.update(dt);
   liveHands.length = 0;
+  seenKeys.clear();
   for (const [, t] of tracks) applyTrack(t, dt);
+  return tracks.size;
+}
 
-  // Retire state whose track is gone, remembering where it ended.
-  if (ringClock.size > tracks.size) {
+// Called once per frame AFTER every source of hands has run. Any key that did not report
+// this frame has lifted off: remember where it ended (for stroke stitching) and drop it.
+function retireStale() {
+  if (ringClock.size > seenKeys.size) {
     for (const k of [...ringClock.keys()]) {
-      if (tracks.has(k)) continue;
+      if (seenKeys.has(k)) continue;
       const p = lastPos.get(k);
       if (p) ghosts.push({ x: p.x, y: p.y, cid: colorId.get(k), t: clock });
-      ringClock.delete(k); lastPos.delete(k); colorId.delete(k); dwell.delete(k);
+      ringClock.delete(k); lastPos.delete(k); colorId.delete(k); dwell.delete(k); calDwell.delete(k);
     }
   }
   const keep = (cfg.osc?.stitchSeconds ?? 0.7);
   if (ghosts.length) ghosts = ghosts.filter(g => clock - g.t < keep);
-
-  return tracks.size;
 }
 
 // A hand sliding along the wall does NOT always keep one identity: the bridge can drop
@@ -218,6 +226,7 @@ function paintStroke(key, x, y, color, dt) {
 }
 
 function applyTrack(t, dt) {
+  seenKeys.add(t.key);
   if (t.fresh) {
     const g = stitchGhost(t.x, t.y);
     const cid = g ? g.cid : t.id;
@@ -244,6 +253,7 @@ function applyTrack(t, dt) {
   liveHands.push({ x: t.x, y: t.y, color });
   lastTouch = t;
   const moved = paintStroke(t.key, t.x, t.y, color, dt);
+  calibTrack(t, dt, moved);
 
   const C = cfg.coral;
   if (moved > C.stillSpeed * dt) {
@@ -302,16 +312,44 @@ const demoHands = DEMO ? [
   // A hand that barely moves — the coral path. Same reasoning as the fast sweeper above:
   // every demo hand drifting at a middling speed is exactly how the trail bug survived
   // testing, so DEMO now covers both ends of the range.
-  { id: 905, key: 'd5', cx: 0.28, cy: 0.42, ax: 0.004, ay: 0.008, sx: 0.20, sy: 0.13, ph: 3.0, x: 0, y: 0, fresh: true }
+  { id: 905, key: 'd5', cx: 0.28, cy: 0.42, ax: 0.004, ay: 0.008, sx: 0.20, sy: 0.13, ph: 3.0, x: 0, y: 0, fresh: true },
+  // A "calibration robot": parks dead still on wall 2's green mark, then on its orange
+  // one, 5 s each. It exists so the whole calibrate → solve → save chain is exercised
+  // every time DEMO runs, instead of being first tried by a person standing in the room
+  // 10 m from the keyboard.
+  { id: 906, key: 'd6', calibBot: 1, x: 0, y: 0, fresh: true }
 ] : [];
+
+// Which wall a panorama x falls on, and where along it. Demo hands need this because
+// the calibration path keys off the wall a touch belongs to, which real OSC tracks carry
+// but synthetic ones would not.
+function locate(x) {
+  for (const w of walls) {
+    const f = (x - w.u0) / w.uw;
+    if (f >= 0 && f < 1) return { wall: w.index, raw: f };
+  }
+  return { wall: 0, raw: 0 };
+}
 
 function demoUpdate(dt, t) {
   for (const h of demoHands) {
-    const x = (h.cx + h.ax * Math.sin(t * h.sx + h.ph) + 1) % 1;
-    const y = h.cy + h.ay * Math.sin(t * h.sy + h.ph * 1.7);
+    let x, y;
+    if (h.calibBot) {
+      // Runs the calibrate → solve → save chain once, then parks. Left running it would
+      // keep re-solving from its own faked raw values and overwrite a real calibration.
+      const w = walls[1];
+      x = w.u0 + (Math.floor(t / 5) % 2 === 0 ? 0.25 : 0.75) * w.uw;
+      y = calibBotDone ? 0.5 : 0.5;
+      if (calibBotDone) { h.x = x; h.y = y; continue; }
+    } else {
+      x = (h.cx + h.ax * Math.sin(t * h.sx + h.ph) + 1) % 1;
+      y = h.cy + h.ay * Math.sin(t * h.sy + h.ph * 1.7);
+    }
     let dx = x - h.x; dx -= Math.round(dx);
+    const loc = locate(x);
     applyTrack({
       id: h.id, key: h.key, x, y,
+      wall: loc.wall, raw: loc.raw,
       vx: h.fresh ? 0 : dx / dt,
       vy: h.fresh ? 0 : (y - h.y) / dt,
       fresh: h.fresh
@@ -467,35 +505,82 @@ function collectOne() {
 let lastTouch = null;
 let calibMsg = 'chưa hiệu chỉnh';
 const capture = { wall: -1, left: null, right: null };
+const calDwell = new Map();     // track key → seconds held still on a mark
+let calFlash = 0;               // seconds of "captured!" feedback left to draw
+let calibBotDone = false;
 
+// AUTO-CAPTURE. The first version needed someone to press a key at the exact moment a
+// hand was on the mark — which is impossible alone, because the hand is on a wall and
+// the keyboard is across the room. Holding still for a moment is something the person at
+// the wall can do without help, and the wall itself confirms it.
+const CAL_HOLD = 1.4;           // seconds of stillness before a mark is taken
+const CAL_NEAR = 0.16;          // how close to a mark counts, as a fraction of wall width
+const CAL_STILL = 0.09;         // wall-heights/second below which a hand counts as still
+
+function calibTrack(t, dt, moved) {
+  if (!calib.on) return;
+  const w = walls[t.wall];
+  if (!w) return;
+
+  // Which mark is this hand at? Judged on the position the app currently believes, which
+  // is exactly what is being corrected — fine, because the error is far smaller than the
+  // gap between the two marks.
+  const fx = (t.x - w.u0) / w.uw;
+  const dL = Math.abs(fx - 0.25), dR = Math.abs(fx - 0.75);
+  const side = dL < dR ? 'left' : 'right';
+  const near = Math.min(dL, dR);
+
+  if (near > CAL_NEAR || moved > CAL_STILL * dt) { calDwell.set(t.key, 0); return; }
+
+  const held = (calDwell.get(t.key) ?? 0) + dt;
+  calDwell.set(t.key, held);
+  if (held < CAL_HOLD) return;
+  calDwell.set(t.key, -1.0);     // cooldown, so one long hold captures once
+
+  if (capture.wall !== t.wall) { capture.wall = t.wall; capture.left = null; capture.right = null; }
+  capture[side] = t.raw;
+  calFlash = 1.0;
+  calibMsg = `tường ${t.wall + 1}: đã bắt vạch ${side === 'left' ? 'XANH' : 'CAM'} (${t.raw.toFixed(4)})` +
+    (capture.left != null && capture.right != null ? ' → đang áp dụng…' : ' — mời sang vạch kia');
+
+  if (capture.left != null && capture.right != null) applyCalib();
+}
+
+// Manual override, for when someone IS at the keyboard.
 function captureRef(which) {
   if (!lastTouch) { calibMsg = 'chưa thấy chạm nào — đặt tay lên vạch rồi bấm lại'; return; }
   const w = lastTouch.wall;
   if (capture.wall !== w) { capture.wall = w; capture.left = null; capture.right = null; }
   capture[which] = lastTouch.raw;
+  calFlash = 1.0;
   calibMsg = `tường ${w + 1}: ${which}=${lastTouch.raw.toFixed(4)}` +
     (capture.left != null && capture.right != null ? ' → bấm S để áp dụng' : ' — còn vạch kia');
 }
 
+// Two marks at 25% and 75% pin down BOTH unknowns at once — a shifted quad (offset) and
+// a wrongly-sized one (scale). One point could never separate them.
 function applyCalib() {
   if (capture.wall < 0 || capture.left == null || capture.right == null) {
-    calibMsg = 'cần cả 2 vạch (xanh = [ , cam = ] ) trên CÙNG một tường';
+    calibMsg = 'cần cả 2 vạch (xanh và cam) trên CÙNG một tường';
     return;
   }
   const d = capture.right - capture.left;
   if (Math.abs(d) < 0.05) { calibMsg = 'hai điểm quá gần nhau — đứng đúng 2 vạch'; return; }
   const scale = 0.5 / d;
   const offset = capture.left - 0.25 / scale;
-  const w = walls[capture.wall];
-  w.uScale = scale; w.uOffset = offset;
+  const wall = walls[capture.wall];
+  const idx = capture.wall;
+  wall.uScale = scale; wall.uOffset = offset;
 
   const partial = { walls: walls.map(x => ({ uScale: x.uScale, uOffset: x.uOffset })) };
   window.api.saveConfig(partial).then((r) => {
     calibMsg = r?.ok
-      ? `tường ${capture.wall + 1}: scale=${scale.toFixed(4)} offset=${offset.toFixed(4)} — ĐÃ LƯU`
+      ? `✅ tường ${idx + 1}: scale=${scale.toFixed(4)} offset=${offset.toFixed(4)} — ĐÃ LƯU → ${r.path}`
       : `áp dụng rồi nhưng LƯU HỎNG: ${r?.error} (chép tay vào config.json)`;
-    console.log(`[calib] wall ${capture.wall + 1} uScale=${scale.toFixed(5)} uOffset=${offset.toFixed(5)}`);
+    console.log(`[calib] wall ${idx + 1} uScale=${scale.toFixed(5)} uOffset=${offset.toFixed(5)}`);
   });
+  calFlash = 2.0;
+  calibBotDone = true;      // DEMO's calibration robot has proved the chain; park it
   capture.wall = -1; capture.left = null; capture.right = null;
 }
 
@@ -509,7 +594,12 @@ window.addEventListener('keydown', (e) => {
   if (k === 'h') { hudOn = !hudOn; hudEl.classList.toggle('off', !hudOn); }
   if (k === 'c') waves.clear();
   if (k === 'b') waves.impulse(Math.random(), 0.3 + Math.random() * 0.4, W.dropAmp, 1.0);
-  if (k === 'k') { calib.on = !calib.on; calibMsg = calib.on ? 'ĐANG HIỆU CHỈNH — đứng vào vạch XANH bấm [ , vạch CAM bấm ]' : 'chưa hiệu chỉnh'; }
+  if (k === 'k') {
+    calib.on = !calib.on;
+    calibMsg = calib.on
+      ? 'ĐANG HIỆU CHỈNH — đặt tay lên vạch XANH, GIỮ YÊN 1.5 giây, rồi sang vạch CAM'
+      : 'chưa hiệu chỉnh';
+  }
   if (e.key === '[') captureRef('left');
   if (e.key === ']') captureRef('right');
   if (k === 's' && calib.on) applyCalib();
@@ -569,6 +659,7 @@ function frame() {
   captureCollect();
 
   const touching = applyTouches(dt) + demoUpdate(dt, clock);
+  retireStale();
   bridgeHands(dt);
   idleUpdate(dt, clock, touching > 0);
   motes.update(dt, liveHands);
@@ -576,7 +667,8 @@ function frame() {
   fish.update(dt, liveHands);
   coral.update(dt, (x, y, col, amt, rad) => waves.deposit(x, y, col, amt, rad));
 
-  calib.build(liveHands, PX_W);
+  calFlash = Math.max(0, calFlash - dt);
+  calib.build(liveHands, PX_W, capture, calFlash);
 
   waves.step(dt);
   waves.render();

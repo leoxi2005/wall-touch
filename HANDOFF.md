@@ -139,7 +139,14 @@ Không dùng three.js → **miễn nhiễm cái bẫy `three/examples` bị elec
 9. **Lấy mẫu lưới sóng bằng bilinear thường để lại nếp gấp C0**, và contour biến nếp gấp đó
    thành **đường gãy khúc thấy rõ**. `smooth4()` (4 tap chéo nửa texel) xử lý gần như miễn phí.
 
-10. **Mỗi dấu đắp là một lượt vẽ TOÀN MÀN HÌNH lên trường trail.** San hô mọc hàng chục
+10. **Đừng ghi bất cứ thứ gì cạnh mã nguồn.** Trong bản đóng gói, mọi thứ trong `files`
+   nằm trong `app.asar` **chỉ đọc**. Ghi ra `app.getPath('userData')` và coi nó là lớp
+   phủ lên config gốc.
+11. **Dọn dẹp track phải theo "key nào xuất hiện trong khung này"**, không phải theo
+   "key nào có trong map của tracker". Bản đầu xoá mọi key không thuộc tracker mỗi khung
+   — nghĩa là toàn bộ bàn tay DEMO bị xoá trạng thái liên tục, và **bộ đếm giữ-yên của
+   hiệu chỉnh không bao giờ tăng quá 0**. Triệu chứng: giữ tay mãi mà không bắt được.
+12. **Mỗi dấu đắp là một lượt vẽ TOÀN MÀN HÌNH lên trường trail.** San hô mọc hàng chục
    nhánh cùng lúc và một nét quẹt đắp cả chục dấu mỗi khung — ở full res đó là hàng chục
    triệu pixel/khung cho vài gaussian rộng vài texel. Nay `deposit()` **xếp hàng, gộp 16
    dấu một lượt** (`flushDeposits`). Thêm chỗ đắp mới thì cứ gọi `deposit()` như thường,
@@ -257,11 +264,23 @@ của Door Portals):
    đang nghĩ tay bạn ở đó; **khoảng cách giữa vạch trắng và tay bạn CHÍNH LÀ sai số**.
 2. Đứng đúng vạch **xanh lá**, đặt tay lên tường, bấm **`[`**.
 3. Đứng đúng vạch **cam**, đặt tay lên tường, bấm **`]`**.
-4. Bấm **`s`** → app giải ra `uScale`/`uOffset` cho tường đó, áp dụng ngay và **ghi thẳng
-   vào `config.json`**. Lặp cho từng tường.
+4. **Không cần bấm gì cả** — giữ tay yên trên vạch ~1.4 s là app tự bắt (vạch bắt được
+   sẽ **chuyển sang trắng và dày lên**, cả phòng nháy một cái). Bắt đủ 2 vạch thì tự
+   giải, tự áp dụng, tự lưu. Lặp cho từng tường.
+   (Nếu có người ngồi máy thì vẫn dùng được `[` `]` `s` như cũ.)
 
 Hai điểm ở 25%/75% ghim được **cả hai ẩn số cùng lúc** — quad bị dịch (offset) và quad
 sai bề rộng (scale) — mà một điểm thì không bao giờ tách được.
+
+**⚠️ File lưu KHÔNG nằm cạnh app.** Bản đóng gói có `config.json` **bên trong `app.asar`**
+— file nén, ghi vào là `ENOENT` (đã dính đúng lỗi này tại hiện trường 2026-08-11). Hiệu
+chỉnh được ghi ra **`userData`**:
+- Windows: `%APPDATA%\Wall Touch\config.json`
+- macOS: `~/Library/Application Support/Wall Touch/config.json`
+
+File đó là **lớp phủ**: app đọc `config.json` gốc trước, rồi chồng file này lên. Muốn xoá
+hiệu chỉnh thì xoá file đó. Đường dẫn được in ra log lúc khởi động và hiện trên HUD sau
+khi lưu.
 
 **Đọc kết quả để biết hỏng ở đâu:** `uScale ≠ 1` → bề rộng quad sai; `uOffset ≠ 0` → quad
 bị dịch, hoặc sensor **không gắn đúng giữa tường** (HANDOFF bridge mục 15 ghi đây là ẩn số

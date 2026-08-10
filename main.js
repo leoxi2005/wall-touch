@@ -17,7 +17,12 @@ app.commandLine.appendSwitch('force_high_performance_gpu');
 
 let win = null;
 let config = null;
+let userCfgPath = null;   // where calibration is written — NEVER inside the asar
 
+// Anything the app writes MUST go to userData, not next to the source. In a packaged
+// build config.json lives inside app.asar — a read-only archive — so writing there fails
+// with ENOENT and a calibration done on site is lost the moment the app closes. The
+// bundled file stays the defaults; the user file is an overlay on top of it.
 function loadConfig() {
   const p = path.join(__dirname, 'config.json');
   try {
@@ -25,6 +30,19 @@ function loadConfig() {
   } catch (err) {
     console.error('[config] failed to read config.json:', err.message);
     config = {};
+  }
+
+  userCfgPath = path.join(app.getPath('userData'), 'config.json');
+  try {
+    if (fs.existsSync(userCfgPath)) {
+      const over = JSON.parse(fs.readFileSync(userCfgPath, 'utf8'));
+      applyOverlay(config, over);
+      console.log('[config] overlay loaded from', userCfgPath);
+    } else {
+      console.log('[config] no overlay yet; will save calibration to', userCfgPath);
+    }
+  } catch (err) {
+    console.error('[config] overlay unreadable, ignoring:', err.message);
   }
   // Dev override: RENDER_SCALE=0.4 npm start → preview at 40% resolution. It scales
   // the SIM grids too (src/app.js), so a Mac preview is cheap end to end.
@@ -38,6 +56,21 @@ function loadConfig() {
     if (n >= 1 && n <= 8) config.ndi = { ...(config.ndi || {}), pbo: n };
   }
   return config;
+}
+
+// Shallow per-section merge, plus per-index merge for walls. Deliberately not a deep
+// generic merge: the only things written back are small named fields, and a clever merge
+// would silently resurrect stale settings after a config change.
+function applyOverlay(base, over) {
+  for (const [k, v] of Object.entries(over)) {
+    if (k === 'walls' && Array.isArray(v) && Array.isArray(base.walls)) {
+      v.forEach((w, i) => { if (base.walls[i] && w) Object.assign(base.walls[i], w); });
+    } else if (v && typeof v === 'object' && !Array.isArray(v) && base[k] && typeof base[k] === 'object') {
+      Object.assign(base[k], v);
+    } else {
+      base[k] = v;
+    }
+  }
 }
 
 function createWindow() {
@@ -115,14 +148,23 @@ ipcMain.handle('config:get', () => config);
 // exactly when you least want to redo it.
 ipcMain.handle('config:save', (_e, partial) => {
   try {
-    const p = path.join(__dirname, 'config.json');
-    const disk = JSON.parse(fs.readFileSync(p, 'utf8'));
-    if (partial.walls) {
-      partial.walls.forEach((pw, i) => { if (disk.walls[i]) Object.assign(disk.walls[i], pw); });
+    let disk = {};
+    if (fs.existsSync(userCfgPath)) {
+      try { disk = JSON.parse(fs.readFileSync(userCfgPath, 'utf8')); } catch (_) { disk = {}; }
     }
-    fs.writeFileSync(p, JSON.stringify(disk, null, 2));
-    return { ok: true, path: p };
+    if (partial.walls) {
+      disk.walls = disk.walls || [];
+      partial.walls.forEach((pw, i) => { disk.walls[i] = { ...(disk.walls[i] || {}), ...pw }; });
+    }
+    for (const [k, v] of Object.entries(partial)) if (k !== 'walls') disk[k] = v;
+
+    fs.mkdirSync(path.dirname(userCfgPath), { recursive: true });
+    fs.writeFileSync(userCfgPath, JSON.stringify(disk, null, 2));
+    applyOverlay(config, partial);
+    console.log('[config] saved →', userCfgPath);
+    return { ok: true, path: userCfgPath };
   } catch (err) {
+    console.error('[config] save failed:', err.message);
     return { ok: false, error: err.message };
   }
 });

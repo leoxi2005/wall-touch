@@ -1,6 +1,6 @@
 {
   "name": "wall-touch",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "WALL TOUCH — mặt nước giao thoa điều khiển bằng Hokuyo LiDAR: chạm sinh sóng, quẹt để lại vệt. Electron + WebGL2, 5× NDI Out, OSC In. Cùng tên NDI với Door Portals.",
   "main": "main.js",
   "author": "LEOXI",

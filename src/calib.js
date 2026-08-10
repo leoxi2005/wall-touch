@@ -114,7 +114,11 @@ export class Calib {
   }
 
   // hands: [{ x }] in panorama uv. `wallOf` maps a hand to its wall index for colouring.
-  build(hands, pxW) {
+  // `capture` is which marks have been taken on which wall; `flash` counts down after a
+  // capture. Both are drawn ON THE WALL, because the person doing the calibration is
+  // standing at the wall and cannot see the operator's screen — without this they have no
+  // way to know whether holding still worked.
+  build(hands, pxW, capture = null, flash = 0) {
     this.count = 0;
     if (!this.on) return;
     const wUv = 6 / pxW;   // ~6 px wide bars — readable from the far side of the room
@@ -127,8 +131,15 @@ export class Calib {
       // The two reference marks. 25% and 75% of the wall are far enough apart that a
       // small standing error barely moves the fit, and both are easy to find with a tape
       // measure from the nearest corner.
-      this._bar(w.u0 + 0.25 * w.uw, 0.05, 0.95, 0.10, 1.00, 0.30, wUv * 2.0);
-      this._bar(w.u0 + 0.75 * w.uw, 0.05, 0.95, 1.00, 0.45, 0.02, wUv * 2.0);
+      const mine = capture && capture.wall === w.index;
+      const gotL = mine && capture.left != null;
+      const gotR = mine && capture.right != null;
+      // A taken mark turns white and grows a second bar beside it — unmistakable from
+      // across the room, and it tells you to move to the other one.
+      this._bar(w.u0 + 0.25 * w.uw, 0.05, 0.95,
+        gotL ? 1.0 : 0.10, 1.00, gotL ? 1.0 : 0.30, wUv * (gotL ? 3.0 : 2.0));
+      this._bar(w.u0 + 0.75 * w.uw, 0.05, 0.95,
+        1.00, gotR ? 1.0 : 0.45, gotR ? 1.0 : 0.02, wUv * (gotR ? 3.0 : 2.0));
 
       // Centre tick, short — a quick sanity check that needs no measuring at all.
       this._bar(w.u0 + 0.5 * w.uw, 0.44, 0.56, 0.35, 0.45, 0.55, wUv);
@@ -137,6 +148,12 @@ export class Calib {
     // Where the app currently believes each hand is. The gap between this and the actual
     // hand IS the error being calibrated out.
     for (const h of hands) this._bar(h.x, 0.0, 1.0, 1.0, 1.0, 1.0, wUv * 2.5);
+
+    // Confirmation flash across the whole room, so a capture is impossible to miss.
+    if (flash > 0) {
+      const k = Math.min(1, flash) * 0.8;
+      for (let i = 0; i < 40; i++) this._bar(i / 40, 0.0, 1.0, k, k, k, wUv);
+    }
   }
 
   draw() {
