@@ -124,6 +124,22 @@ export class Calib {
     }
   }
 
+  // A horizontal run of `n` stacked 1-px lines — the thick horizontal counterpart of
+  // _bar, used for the progress meter under each mark.
+  _hline(x0, x1, y, r, g, b, thickUv) {
+    const n = 5;
+    for (let i = 0; i < n; i++) {
+      const yy = y + (i - (n - 1) / 2) * thickUv / n;
+      if (this.count + 2 > this.cap) return;
+      const d = this.data;
+      let o = this.count * FLOATS;
+      d[o] = (x0 + 1) % 1; d[o + 1] = yy; d[o + 2] = r; d[o + 3] = g; d[o + 4] = b;
+      o += FLOATS;
+      d[o] = (x1 + 1) % 1; d[o + 1] = yy; d[o + 2] = r; d[o + 3] = g; d[o + 4] = b;
+      this.count += 2;
+    }
+  }
+
   // A cross marks a POINT, which is what a 2D fit needs. Two vertical bars could only
   // ever pin down horizontal error; the quad's error mixes the axes, so the marks have to
   // say "put your hand exactly HERE", not "somewhere on this line".
@@ -148,7 +164,9 @@ export class Calib {
   // capture. Both are drawn ON THE WALL, because the person doing the calibration is
   // standing at the wall and cannot see the operator's screen — without this they have no
   // way to know whether holding still worked.
-  build(hands, pxW, capture = null, flash = 0) {
+  // `capture` is a Map of wall index → array of captured marks. Per wall, because a room
+  // has several people in it and one person's progress must not wipe another's.
+  build(hands, pxW, capture = null, flash = 0, holds = null, holdFull = 1) {
     this.count = 0;
     if (!this.on) return;
     const wUv = 6 / pxW;   // ~6 px wide bars — readable from the far side of the room
@@ -158,21 +176,42 @@ export class Calib {
       // corners of the room, the projector mapping is off, not the sensor.
       this._bar(w.u0, 0.0, 1.0, 0.10, 0.16, 0.22, wUv);
 
-      const taken = (capture && capture.wall === w.index) ? capture.taken : null;
+      const taken = capture ? capture.get(w.index) : null;
       for (let i = 0; i < MARKS.length; i++) {
         const m = MARKS[i];
         const got = taken && taken[i];
+        const st = holds ? holds.get(`${w.index}:${i}`) : null;
+        const p = st ? Math.max(0, Math.min(1, st.held / holdFull)) : 0;
+
         // Colour says which one to go to next: unvisited marks keep their colour, a
-        // captured one turns white and grows.
+        // captured one turns white and grows. Progress brightens it on the way.
+        const lift = got ? 1 : 0.55 + 0.45 * p;
         const col = got ? [1.0, 1.0, 1.0] : m.col;
-        this._cross(w.u0 + m.fx * w.uw, m.fy, col[0], col[1], col[2],
+        this._cross(w.u0 + m.fx * w.uw, m.fy, col[0] * lift, col[1] * lift, col[2] * lift,
           wUv * (got ? 3.0 : 2.0), 0.11);
+
+        // A FILLING BAR under the mark. Without it there is no way to tell whether the
+        // app has noticed the hand at all, how long is left, or why nothing happened —
+        // which is exactly how it failed on site: people held, saw nothing, gave up.
+        if (p > 0 && !got) {
+          const halfW = 0.075 / this.aspect;
+          const y = m.fy - 0.155;
+          this._hline(w.u0 + m.fx * w.uw - halfW, w.u0 + m.fx * w.uw + halfW, y,
+            0.18, 0.22, 0.28, wUv * 1.2);
+          this._hline(w.u0 + m.fx * w.uw - halfW, w.u0 + m.fx * w.uw - halfW + 2 * halfW * p, y,
+            1.0, 1.0, 1.0, wUv * 1.2);
+        }
       }
     }
 
-    // Where the app currently believes each hand is. The gap between this and the actual
-    // hand IS the error being calibrated out.
-    for (const h of hands) this._bar(h.x, 0.0, 1.0, 1.0, 1.0, 1.0, wUv * 2.5);
+    // Where the app currently believes each hand is — as a CROSSHAIR, not just a vertical
+    // bar. The bar alone says nothing about height, so a person standing at the wall
+    // could not tell whether the app had seen them at all, let alone at what height.
+    for (const h of hands) {
+      this._bar(h.x, 0.0, 1.0, 0.55, 0.60, 0.70, wUv);
+      this._hline(h.x - 0.10 / this.aspect, h.x + 0.10 / this.aspect, h.y, 1.0, 1.0, 1.0, wUv * 2.0);
+      this._bar(h.x, h.y - 0.10, h.y + 0.10, 1.0, 1.0, 1.0, wUv * 2.0);
+    }
 
     // Confirmation flash across the whole room, so a capture is impossible to miss.
     if (flash > 0) {

@@ -262,8 +262,9 @@ của Door Portals):
 1. Bấm **`k`** (hoặc chạy với `CALIB=1`) → mặt nước tối lại, mỗi tường hiện **4 dấu chữ
    thập** ở 25%/75% bề ngang × 30%/70% chiều cao (≈ 72 cm và 168 cm trên tường 2.40 m).
    Vạch **trắng** = chỗ app đang nghĩ tay bạn ở đó.
-2. Đặt tay lên **từng dấu**, **giữ yên ~1.4 s**. Dấu bắt được **chuyển trắng và to lên**,
-   cả phòng nháy một cái.
+2. Đặt tay lên **từng dấu**, giữ ~1.2 s. **Có thanh tiến trình chạy ngay dưới dấu** trong
+   lúc giữ, và **dấu chữ thập trắng bám theo tay** cho biết app đang thấy bạn ở đâu.
+   Bắt xong: dấu **chuyển trắng và to lên**, cả phòng nháy một cái.
 3. Đủ **4 dấu** → app tự khớp, tự áp dụng, **tự lưu**. Sang tường tiếp theo.
    (`s` = ép tính với số điểm đang có, tối thiểu 3. `r` = xoá làm lại.)
 
@@ -276,6 +277,21 @@ hình chữ nhật khớp được **affine 2 chiều** (6 số, `walls[i].uAffi
 Giá trị `raw` mỗi điểm là **trung bình cả lúc giữ tay**, không phải một mẫu tức thời: ở
 tường rộng 5.6 m thì một phần nghìn bề rộng đã là nửa centimet.
 `uScale`/`uOffset` (1 chiều) vẫn còn làm phương án lùi; có `uAffine` thì nó được ưu tiên.
+
+**⚠️ BA THỨ LÀM VIỆC "GIỮ TAY MÀ KHÔNG ĂN"** — hiện trường 2026-08-11 báo *"nhiều khi
+không thấy nó ăn, không có phản hồi gì luôn"*. Cả ba đều đã sửa, và cả ba đều là bài học
+chung cho mọi thứ đo-bằng-người:
+1. **Không có phản hồi trong lúc chờ.** Chỉ báo SAU khi bắt xong. Người đứng ở tường
+   không biết app có thấy mình không, còn bao lâu, hay tại sao không ăn — nên họ bỏ cuộc.
+   → Nay có **thanh tiến trình dưới mỗi dấu** + **chữ thập trắng bám theo tay**.
+2. **Đòi tay đứng YÊN từng khung** (ngưỡng 21 cm/s). Bàn tay áp lên tường vẫn rung, và
+   nhiễu cảm biến vượt ngưỡng đó thường xuyên → bộ đếm reset liên tục. → Nay chỉ cần
+   **ở trong bán kính của dấu**; các mẫu vốn đã được lấy trung bình.
+3. **Bộ đếm khoá theo track id**, mà bridge thả rồi bắt lại tay liên tục → mất tiến trình
+   giữa chừng. Và **phiên bắt dấu chỉ có MỘT tường**: ai chạm sang tường khác là xoá sạch
+   những dấu đã bắt. Trong phòng 5 người thì đó là trạng thái bình thường, không phải
+   trường hợp hiếm. → Nay tiến trình khoá theo **dấu** (`tường:dấu`), và mỗi tường có
+   **phiên riêng**.
 
 **⚠️ File lưu KHÔNG nằm cạnh app.** Bản đóng gói có `config.json` **bên trong `app.asar`**
 — file nén, ghi vào là `ENOENT` (đã dính đúng lỗi này tại hiện trường 2026-08-11). Hiệu

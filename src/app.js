@@ -153,7 +153,7 @@ function retireStale() {
       if (seenKeys.has(k)) continue;
       const p = lastPos.get(k);
       if (p) ghosts.push({ x: p.x, y: p.y, cid: colorId.get(k), t: clock });
-      ringClock.delete(k); lastPos.delete(k); colorId.delete(k); dwell.delete(k); calDwell.delete(k);
+      ringClock.delete(k); lastPos.delete(k); colorId.delete(k); dwell.delete(k);
     }
   }
   const keep = (cfg.osc?.stitchSeconds ?? 0.7);
@@ -234,7 +234,7 @@ function applyTrack(t, dt) {
     colorId.set(t.key, cid);
     const color = colorFor(cid);
 
-    liveHands.push({ x: t.x, y: t.y, color });
+    liveHands.push({ x: t.x, y: t.y, color, wall: t.wall, raw: t.raw, rawY: t.rawY });
     if (g) {
       // Same hand, new id: continue the stroke from where it stopped, and no splash —
       // a hand that never left the wall must not look like a fresh touch.
@@ -251,10 +251,9 @@ function applyTrack(t, dt) {
   }
 
   const color = colorFor(colorId.get(t.key) ?? t.id);
-  liveHands.push({ x: t.x, y: t.y, color });
+  liveHands.push({ x: t.x, y: t.y, color, wall: t.wall, raw: t.raw, rawY: t.rawY });
   lastTouch = t;
   const moved = paintStroke(t.key, t.x, t.y, color, dt);
-  calibTrack(t, dt, moved);
 
   const C = cfg.coral;
   if (moved > C.stillSpeed * dt) {
@@ -514,49 +513,83 @@ let calibBotDone = false;
 // reading for mark i — averaged, because a single instantaneous sample carries the
 // sensor's jitter straight into the fit, and at 5 m wide a thousandth of the width is
 // half a centimetre.
-const capture = { wall: -1, taken: new Array(MARKS.length).fill(null) };
-const calDwell = new Map();     // track key → { held, side, sx, sy, n }
+// Captured marks PER WALL. The first version kept a single "current wall" session, so
+// the moment anybody touched a different wall the session reset and everything already
+// held on this wall was thrown away. In a room with five people that is not an edge case
+// — it is the normal condition, and it looks exactly like "holding does nothing".
+const captures = new Map();     // wall index → array of {raw, rawY} | null
 
-const CAL_HOLD = 1.4;           // seconds of stillness before a mark is taken
-const CAL_NEAR = 0.13;          // how close to a mark counts (wall widths / heights)
-const CAL_STILL = 0.09;         // wall-heights/second below which a hand counts as still
-
-function resetCapture(wall) {
-  capture.wall = wall;
-  capture.taken = new Array(MARKS.length).fill(null);
+function takenFor(wall) {
+  let a = captures.get(wall);
+  if (!a) { a = new Array(MARKS.length).fill(null); captures.set(wall, a); }
+  return a;
 }
 
-function calibTrack(t, dt, moved) {
-  if (!calib.on) return;
-  const w = walls[t.wall];
-  if (!w) return;
+// Hold progress, keyed by MARK — "wall:markIndex" — not by track id.
+//
+// Two reasons a hold used to fail silently, both fixed here:
+//   · it was keyed by track id, and the bridge drops and re-acquires a hand freely. A
+//     re-acquire mid-hold started the timer again from zero.
+//   · it demanded the hand be STILL frame to frame, at 21 cm/s. Sensor jitter on a hand
+//     pressed against a wall crosses that regularly, so the timer kept resetting and the
+//     person just saw nothing happen. Staying inside the mark's radius is the real
+//     requirement; the samples are averaged anyway.
+const holds = new Map();
 
-  const fx = (t.x - w.u0) / w.uw;
-  let best = -1, bestD = CAL_NEAR;
-  for (let i = 0; i < MARKS.length; i++) {
-    // Distance measured in wall-heights on both axes, so "near" means the same physical
-    // distance sideways as it does vertically.
-    const d = Math.hypot((fx - MARKS[i].fx) * w.uw * ASPECT, t.y - MARKS[i].fy);
-    if (d < bestD) { bestD = d; best = i; }
+const CAL_HOLD = 1.2;           // seconds inside a mark before it is taken
+const CAL_NEAR = 0.15;          // radius that counts, in wall-heights (~36 cm)
+const CAL_DECAY = 2.5;          // how fast progress drains once the hand leaves
+
+function resetCapture() {
+  captures.clear();
+  holds.clear();
+}
+
+// Called once per frame with every hand currently on a wall.
+function calibUpdate(dt, hands) {
+  if (!calib.on) return;
+
+  const touched = new Set();
+  for (const h of hands) {
+    if (h.wall == null || h.raw == null) continue;
+    const w = walls[h.wall];
+    if (!w) continue;
+    const fx = (h.x - w.u0) / w.uw;
+
+    let best = -1, bestD = CAL_NEAR;
+    for (let i = 0; i < MARKS.length; i++) {
+      const d = Math.hypot((fx - MARKS[i].fx) * w.uw * ASPECT, h.y - MARKS[i].fy);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best < 0) continue;
+
+    const key = `${h.wall}:${best}`;
+    touched.add(key);
+    let st = holds.get(key);
+    if (!st) { st = { held: 0, sx: 0, sy: 0, n: 0, done: false }; holds.set(key, st); }
+    if (st.done) continue;
+
+    st.held = Math.min(CAL_HOLD, st.held + dt);
+    st.sx += h.raw; st.sy += h.rawY; st.n++;
+
+    if (st.held >= CAL_HOLD) {
+      st.done = true;
+      const taken = takenFor(h.wall);
+      taken[best] = { raw: st.sx / st.n, rawY: st.sy / st.n };
+      calFlash = 1.0;
+      const done = taken.filter(Boolean).length;
+      calibMsg = `tường ${h.wall + 1}: đã bắt ${done}/${MARKS.length} dấu`;
+      if (done === MARKS.length) applyCalib(h.wall);
+    }
   }
 
-  let st = calDwell.get(t.key);
-  if (best < 0 || moved > CAL_STILL * dt) { calDwell.delete(t.key); return; }
-  if (!st || st.mark !== best) { st = { mark: best, held: 0, sx: 0, sy: 0, n: 0 }; calDwell.set(t.key, st); }
-  if (st.held < 0) return;      // already captured this hold; wait for the hand to move off
-
-  st.held += dt;
-  st.sx += t.raw; st.sy += t.rawY; st.n++;
-  if (st.held < CAL_HOLD) return;
-  st.held = -1;
-
-  if (capture.wall !== t.wall) resetCapture(t.wall);
-  capture.taken[best] = { raw: st.sx / st.n, rawY: st.sy / st.n };
-  calFlash = 1.0;
-
-  const done = capture.taken.filter(Boolean).length;
-  calibMsg = `tường ${t.wall + 1}: đã bắt ${done}/${MARKS.length} điểm`;
-  if (done === MARKS.length) applyCalib();
+  // Progress drains where nobody is standing, so a half-finished hold does not sit there
+  // forever pretending to be nearly done.
+  for (const [key, st] of holds) {
+    if (touched.has(key) || st.done) continue;
+    st.held -= dt * CAL_DECAY;
+    if (st.held <= 0) holds.delete(key);
+  }
 }
 
 // Least squares through a 3x3 normal-equation solve. With four points at the corners of
@@ -580,13 +613,14 @@ function solve3(M, rhs) {
   return [b[0] / a[0][0], b[1] / a[1][1], b[2] / a[2][2]];
 }
 
-function applyCalib() {
+function applyCalib(idx) {
+  if (idx == null || idx < 0) { calibMsg = 'chưa có tường nào đang bắt dấu'; return; }
+  const taken = takenFor(idx);
   const pts = [];
   for (let i = 0; i < MARKS.length; i++) {
-    if (capture.taken[i]) pts.push({ ...capture.taken[i], tx: MARKS[i].fx, ty: MARKS[i].fy });
+    if (taken[i]) pts.push({ ...taken[i], tx: MARKS[i].fx, ty: MARKS[i].fy });
   }
-  const idx = capture.wall;
-  if (idx < 0 || pts.length < 3) { calibMsg = `cần ít nhất 3 điểm (đang có ${pts.length})`; return; }
+  if (pts.length < 3) { calibMsg = `tường ${idx + 1}: cần ít nhất 3 dấu (đang có ${pts.length})`; return; }
 
   const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
   const rx = [0, 0, 0], ry = [0, 0, 0];
@@ -613,7 +647,10 @@ function applyCalib() {
   });
   calFlash = 2.0;
   calibBotDone = true;
-  resetCapture(-1);
+  // Only this wall's session is cleared; anyone mid-calibration on another wall keeps
+  // everything they have held so far.
+  captures.delete(idx);
+  for (const k of [...holds.keys()]) if (k.startsWith(`${idx}:`)) holds.delete(k);
 }
 
 // ---------------------------------------------------------------- HUD
@@ -632,8 +669,13 @@ window.addEventListener('keydown', (e) => {
       ? 'ĐANG HIỆU CHỈNH — đặt tay lên từng dấu CHỮ THẬP, giữ yên 1.5 giây. Đủ 4 dấu là xong.'
       : 'chưa hiệu chỉnh';
   }
-  if (k === 's' && calib.on) applyCalib();          // force a fit from whatever is held
-  if (k === 'r' && calib.on) { resetCapture(-1); calibMsg = 'đã xoá các điểm đang bắt'; }
+  // Force a fit on whichever wall has the most marks held.
+  if (k === 's' && calib.on) {
+    let bw = -1, bn = 0;
+    for (const [w, t] of captures) { const n = t.filter(Boolean).length; if (n > bn) { bn = n; bw = w; } }
+    applyCalib(bw);
+  }
+  if (k === 'r' && calib.on) { resetCapture(); calibMsg = 'đã xoá các dấu đang bắt'; }
 });
 
 setInterval(() => {
@@ -644,7 +686,11 @@ setInterval(() => {
     `NDI ${ndiRunning ? 'ON 5×[' + walls.map(w => w.cropW + 'x' + dh).join(' ') + ']' : 'OFF' + (ndiError ? ' (' + ndiError + ')' : '')}\n` +
     `OSC :${cfg.osc?.port ?? '—'}  pkts:${tracker.packets}  last:${tracker.lastAddress}\n` +
     `touches/wall: ${tracker.counts.join(' ')}   tracked:${tracker.active}   coral:${coral.count}\n` +
-    `calib ${calib.on ? 'ON' : 'off'}  ${walls.map((w, i) => `W${i + 1}:${w.uAffine ? '2D✓' : (w.uScale !== 1 || w.uOffset !== 0 ? '1D' : '—')}`).join(' ')}\n` +
+    `calib ${calib.on ? 'ON' : 'off'}  ${walls.map((w, i) => {
+      const t = captures.get(i);
+      const n = t ? t.filter(Boolean).length : 0;
+      return `W${i + 1}:${w.uAffine ? '2D✓' : (w.uScale !== 1 || w.uOffset !== 0 ? '1D' : '—')}${n ? '(' + n + '/4)' : ''}`;
+    }).join(' ')}\n` +
     `        ${calibMsg}\n` +
     `[h]=hud  [c]=xoá  [b]=giọt  [k]=hiệu chỉnh  [s]=ép tính  [r]=bắt lại  ·  kéo chuột = chạm giả`;
 }, 250);
@@ -691,6 +737,7 @@ function frame() {
 
   const touching = applyTouches(dt) + demoUpdate(dt, clock);
   retireStale();
+  calibUpdate(dt, liveHands);
   bridgeHands(dt);
   idleUpdate(dt, clock, touching > 0);
   motes.update(dt, liveHands);
@@ -699,7 +746,7 @@ function frame() {
   coral.update(dt, (x, y, col, amt, rad) => waves.deposit(x, y, col, amt, rad));
 
   calFlash = Math.max(0, calFlash - dt);
-  calib.build(liveHands, PX_W, capture, calFlash);
+  calib.build(liveHands, PX_W, captures, calFlash, holds, CAL_HOLD);
 
   waves.step(dt);
   waves.render();
