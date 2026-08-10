@@ -97,45 +97,84 @@ function colorFor(id) {
 const tracker = new TouchTracker(walls, cfg.osc ?? {});
 window.api.onOsc((msg) => tracker.handle(msg));
 
-// Per-track state the tracker has no business knowing about: when this hand last sent
-// out a ring. A hand resting on the wall should keep emitting concentric rings, but on
-// a rhythm — every frame would just make a permanent bulge.
+// Per-track state the tracker has no business knowing about: where this hand was on the
+// previous sample, and when it last sent out a ring.
+const lastPos = new Map();
 const ringClock = new Map();
 
 function applyTouches(dt) {
   const tracks = tracker.update(dt);
   for (const [, t] of tracks) applyTrack(t, dt);
-  // Drop ring clocks whose track is gone, or the map grows all night.
+  // Drop state whose track is gone, or these maps grow all night.
   if (ringClock.size > tracks.size) {
-    for (const k of ringClock.keys()) if (!tracks.has(k)) ringClock.delete(k);
+    for (const k of ringClock.keys()) {
+      if (!tracks.has(k)) { ringClock.delete(k); lastPos.delete(k); }
+    }
   }
   return tracks.size;
+}
+
+function pointerUv(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width, y: 1 - (e.clientY - r.top) / r.height };
+}
+
+// Paint one stroke segment: everything a hand did between the previous sample and this
+// one. TWO things here are load-bearing, and the first version got both wrong so that a
+// quick swipe left nothing on the wall at all:
+//
+//  1. Deposit is proportional to DISTANCE, not to time. Time-based deposit means a hand
+//     that lingers builds a mountain while a hand that sweeps past deposits almost
+//     nothing — because it spends almost no time anywhere. A stroke should weigh the
+//     same per metre however fast it was drawn.
+//  2. It STAMPS ALONG the segment. At 30 Hz a hand moving 2 m/s jumps further than the
+//     stamp radius, so one stamp per sample lands as a dotted line instead of a stroke.
+function paintStroke(key, x, y, color, dt) {
+  const prev = lastPos.get(key);
+  lastPos.set(key, { x, y });
+  if (!prev) return 0;
+
+  let dx = x - prev.x; dx -= Math.round(dx);        // pentagon: take the short way round
+  const dy = y - prev.y;
+  const dist = Math.hypot(dx * ASPECT, dy);         // wall-heights
+
+  const step = W.trailRadius * 0.5;
+  const n = Math.min(W.maxStamps ?? 14, Math.max(1, Math.ceil(dist / step)));
+  const perStamp = W.trailInk * (dist / step) / n;
+  if (perStamp > 1e-4) {
+    for (let i = 1; i <= n; i++) {
+      const f = i / n;
+      waves.deposit((prev.x + dx * f + 1) % 1, prev.y + dy * f, color, perStamp, 1);
+    }
+  }
+
+  // Dwell is what is left of the old behaviour: a hand held still does still sink into
+  // the surface, just slowly, and only where it actually rests.
+  waves.deposit(x, y, color, W.trailDwell * dt, 1);
+
+  // The wake is per-distance as well — dragging across the room throws real wave, a
+  // resting hand throws none. Capped so a single jumpy LiDAR sample cannot detonate it.
+  if (dist > 1e-4) waves.impulse(x, y, Math.min(W.wakeAmp * dist, W.wakeMax ?? 0.45), 0.8);
+
+  return dist;
 }
 
 function applyTrack(t, dt) {
   const color = colorFor(t.id);
 
-  // Speed in wall-heights per second. The x component is multiplied by ASPECT because
-  // uv.x spans 9.58 wall-heights — without it a horizontal swipe would read as 9×
-  // slower than the identical vertical one.
-  const speed = Math.hypot(t.vx * ASPECT, t.vy);
-
   if (t.fresh) {
     waves.impulse(t.x, t.y, W.dropAmp, 1.0);
-    waves.deposit(t.x, t.y, color, W.trailRate * 0.25, 1.2);
+    waves.deposit(t.x, t.y, color, W.trailInk, 1.2);
+    lastPos.set(t.key, { x: t.x, y: t.y });
     ringClock.set(t.key, 0);
     t.fresh = false;
     return;
   }
 
-  // The trail: deposited as rate × dt, so ridge height depends on how long the hand
-  // dwelt there and not on the framerate.
-  waves.deposit(t.x, t.y, color, W.trailRate * dt, 1);
+  paintStroke(t.key, t.x, t.y, color, dt);
 
-  // A moving hand drags a wake; a still hand pulses. Both feed the same wave field, so
-  // they interfere with everyone else's for free.
-  if (speed > 0.02) waves.impulse(t.x, t.y, W.wakeAmp * Math.min(speed, 3.0) * dt, 0.8);
-
+  // A hand resting on the wall keeps emitting concentric rings, but on a rhythm — every
+  // frame would just be a permanent bulge.
   const c = (ringClock.get(t.key) ?? 0) + dt;
   if (c >= W.ringInterval) {
     ringClock.set(t.key, 0);
@@ -146,26 +185,22 @@ function applyTrack(t, dt) {
 }
 
 // Mouse drag = one fake touch, for developing without the sensors. It goes through the
-// same panorama uv space the bridge feeds, so what happens here is what the wall does.
+// SAME paintStroke as a real hand, so if it feels wrong here it is wrong on the wall.
 let mouse = null;
 canvas.addEventListener('pointerdown', (e) => {
-  const r = canvas.getBoundingClientRect();
-  const x = (e.clientX - r.left) / r.width, y = 1 - (e.clientY - r.top) / r.height;
-  mouse = { x, y, id: (Math.random() * 1e6) | 0 };
-  waves.impulse(x, y, W.dropAmp, 1.0);
-  waves.deposit(x, y, colorFor(mouse.id), W.trailRate * 0.25, 1.2);
+  const p = pointerUv(e);
+  mouse = { id: (Math.random() * 1e6) | 0 };
+  waves.impulse(p.x, p.y, W.dropAmp, 1.0);
+  waves.deposit(p.x, p.y, colorFor(mouse.id), W.trailInk, 1.2);
+  lastPos.set('mouse', { x: p.x, y: p.y });
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* not fatal */ }
 });
 canvas.addEventListener('pointermove', (e) => {
   if (!mouse) return;
-  const r = canvas.getBoundingClientRect();
-  const x = (e.clientX - r.left) / r.width, y = 1 - (e.clientY - r.top) / r.height;
-  let dx = x - mouse.x; dx -= Math.round(dx);
-  const speed = Math.hypot(dx * ASPECT, y - mouse.y) * 60;
-  waves.deposit(x, y, colorFor(mouse.id), W.trailRate / 60, 1);
-  if (speed > 0.02) waves.impulse(x, y, W.wakeAmp * Math.min(speed, 3.0) / 60, 0.8);
-  mouse.x = x; mouse.y = y;
+  const p = pointerUv(e);
+  paintStroke('mouse', p.x, p.y, colorFor(mouse.id), 1 / 60);
 });
-window.addEventListener('pointerup', () => { mouse = null; });
+window.addEventListener('pointerup', () => { mouse = null; lastPos.delete('mouse'); });
 
 // DEMO=1 npm start → synthetic hands drawing across the walls. Lets the look be tuned
 // (and snapshots taken) without the five sensors, and doubles as an on-site smoke test
@@ -174,7 +209,11 @@ const DEMO = typeof process !== 'undefined' && process.env?.DEMO === '1';
 const demoHands = DEMO ? [
   { id: 901, key: 'd1', cx: 0.12, cy: 0.55, ax: 0.055, ay: 0.15, sx: 0.42, sy: 0.71, ph: 0.0, x: 0, y: 0, fresh: true },
   { id: 902, key: 'd2', cx: 0.45, cy: 0.48, ax: 0.090, ay: 0.20, sx: 0.31, sy: 0.53, ph: 2.1, x: 0, y: 0, fresh: true },
-  { id: 903, key: 'd3', cx: 0.82, cy: 0.60, ax: 0.070, ay: 0.14, sx: 0.55, sy: 0.37, ph: 4.3, x: 0, y: 0, fresh: true }
+  { id: 903, key: 'd3', cx: 0.82, cy: 0.60, ax: 0.070, ay: 0.14, sx: 0.55, sy: 0.37, ph: 4.3, x: 0, y: 0, fresh: true },
+  // A FAST sweeper (~2 m/s, the speed of someone actually swiping). The first three
+  // hands all drift slowly, which is exactly why the original time-based trail looked
+  // fine in testing and left nothing at all when a real hand swept past.
+  { id: 904, key: 'd4', cx: 0.62, cy: 0.50, ax: 0.120, ay: 0.05, sx: 0.72, sy: 0.29, ph: 1.1, x: 0, y: 0, fresh: true }
 ] : [];
 
 function demoUpdate(dt, t) {

@@ -74,6 +74,10 @@ Bấm `h` xem HUD: `pkts` phải tăng, `touches/wall` phải khớp số ngư�
 | `wave` | `waveStepFrag` | 3067×320 | **phương trình sóng 2D thật**: lan, phản xạ, giao thoa |
 | `trail` | `trailSplatFrag` | 1/3 lưới sóng | vệt tay đắp lên thành sống núi, phân rã ~7 s |
 
+Rồi `contourFrag` dựng ảnh từ trường tổng đó theo 2 tầng:
+**tầng khối** (đổ bóng theo độ dốc + dải màu theo độ cao — cái làm nó ra "địa hình có
+ánh sáng" thay vì "hình vẽ nét") và **tầng nét** đè lên trên.
+
 - `src/glutil.js` — WebGL2 helper (program, FBO ping-pong, blit 1 tam giác).
 - `src/waves.js` — điều phối: sub-step sóng, phân rã trail, contour, bloom, composite.
 - `src/shaders.js` — toàn bộ GLSL.
@@ -84,7 +88,7 @@ Bấm `h` xem HUD: `pkts` phải tăng, `touches/wall` phải khớp số ngư�
 Không dùng three.js → **miễn nhiễm cái bẫy `three/examples` bị electron-builder cắt khỏi asar**
 đã làm Door Portals đen màn hình ở v1.0.3.
 
-## 5. ⚠️ 5 BẪY ĐÃ MẮC / ĐÃ XỬ — đừng lặp lại
+## 5. ⚠️ BẪY ĐÃ MẮC / ĐÃ XỬ — đừng lặp lại
 
 1. **PHÒNG NỐI VÒNG KÍN.** 5 tường khép thành ngũ giác nên `uv.x = 1` **chính là** `uv.x = 0`.
    Mọi texture mô phỏng để `REPEAT` trên S; mọi khoảng cách theo x phải `p.x -= round(p.x)`
@@ -102,7 +106,23 @@ Không dùng three.js → **miễn nhiễm cái bẫy `three/examples` bị elec
    đẩy nó qua giới hạn và cả trường biến thành nhiễu trắng.
 4. **Màu trail bị bạc trắng** nếu clamp từng kênh màu: kênh mạnh chạm trần trước. Phải tách
    **A = độ cao (có trần)**, **RGB = màu thuần** trộn theo tỉ lệ phần mới. Đã sửa trong `trailSplatFrag`.
-5. **Lấy mẫu lưới sóng bằng bilinear thường để lại nếp gấp C0**, và contour biến nếp gấp đó
+5. **ĐẮP VỆT THEO THỜI GIAN LÀ SAI — phải theo QUÃNG ĐƯỜNG.** Bản đầu đắp
+   `trailRate * dt`, nên tay đứng yên xây thành núi còn **tay quẹt nhanh gần như không
+   để lại gì** (nó ở mỗi chỗ quá ít thời gian). Ba bàn tay demo đều trôi chậm nên bug
+   này sống sót qua mọi lần kiểm — mãi tới khi chủ dự án quẹt chuột thật mới lộ.
+   Kèm theo: phải **đóng dấu DỌC đoạn đường** giữa 2 mẫu (`paintStroke`), vì ở 30 Hz một
+   bàn tay 2 m/s nhảy xa hơn bán kính dấu → một dấu/mẫu ra nét đứt quãng.
+   → **`DEMO` giờ có bàn tay thứ 4 quẹt nhanh ~2 m/s**, giữ nguyên đừng bỏ, nó là cái
+   duy nhất bắt được lớp lỗi này.
+6. **`look.relief` phải nhân với chiều cao khung hình.** `dFdx` là đạo hàm THEO PIXEL,
+   nên cùng một mặt nước sẽ càng phẳng khi render càng to → preview 0.35 và bản chiếu
+   thật sẽ khác hẳn nhau. Đã nhân trong `waves.js`.
+7. **Specular số mũ cao bắt đúng lưới texel** của lớp sóng độ phân giải thấp → hiện các
+   **ô vuông lấp lánh**. Phải nới `smooth4()` lên ±0.9 texel (đạo hàm khuếch đại nếp gấp
+   C0 mạnh hơn nhiều so với chính giá trị) và giữ `look.specular` thấp.
+8. **Vệt trail phải nổi bằng MÀU, không bằng độ chói.** Bản đầu vẽ nét trên vệt sáng gấp
+   đôi nét thường → cháy trắng, nuốt mất mặt nước. Nay cùng độ sáng, chỉ đổi tông.
+9. **Lấy mẫu lưới sóng bằng bilinear thường để lại nếp gấp C0**, và contour biến nếp gấp đó
    thành **đường gãy khúc thấy rõ**. `smooth4()` (4 tap chéo nửa texel) xử lý gần như miễn phí.
 
 Thêm: **cảnh báo `READ-usage buffer ... discarded the shadow copy`** trong log là **bình thường**
@@ -112,7 +132,13 @@ Thêm: **cảnh báo `READ-usage buffer ... discarded the shadow copy`** trong l
 
 | muốn gì | sửa gì |
 |:--|:--|
-| vệt trail đậm/nhạt hơn | `waves.trailRate`, trần `waves.trailCap` |
+| vệt trail đậm/nhạt hơn | `waves.trailInk` (theo QUÃNG ĐƯỜNG quẹt), trần `waves.trailCap` |
+| giữ tay đứng yên đắp nhanh/chậm | `waves.trailDwell` (theo thời gian) |
+| vệt nổi cao hơn (nhiều vòng hơn) | `waves.trailGain` |
+| vệt sáng/tối hơn | `look.trailGlow` |
+| mặt nước nổi khối nhiều/ít | `look.relief`, `look.shade`, `look.ambient` |
+| lấp lánh trên đỉnh sóng | `look.specular` |
+| tông màu nước (trũng → đỉnh) | `look.rampDeep` / `rampMid` / `rampHigh` |
 | vệt ở lại lâu hơn | `waves.trailHold` (giây, đang 7.0) |
 | sóng lan nhanh hơn | **`waves.substeps`** (đừng đụng `k`) |
 | sóng tắt nhanh/chậm | `waves.damping` (mỗi sub-step) |

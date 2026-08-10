@@ -125,7 +125,18 @@ export class Waves {
       .v3('uCold', L.lineCold[0], L.lineCold[1], L.lineCold[2])
       .v3('uHot', L.lineHot[0], L.lineHot[1], L.lineHot[2])
       .f('uGlow', L.lineGlow)
-      .f('uTrailGlow', L.trailGlow);
+      .f('uTrailGlow', L.trailGlow)
+      // Relief must scale with the framebuffer: dFdx is a PER-PIXEL derivative, so the
+      // same surface looks progressively flatter as the render gets wider. Multiplying by
+      // the height converts it to "per wall-height", and a 0.35-scale preview then shows
+      // exactly the relief the 10350×1080 wall will.
+      .f('uRelief', L.relief * this.height)
+      .f('uAmbient', L.ambient)
+      .f('uShade', L.shade)
+      .f('uSpec', L.specular)
+      .v3('uDeep', L.rampDeep[0], L.rampDeep[1], L.rampDeep[2])
+      .v3('uMid', L.rampMid[0], L.rampMid[1], L.rampMid[2])
+      .v3('uHigh', L.rampHigh[0], L.rampHigh[1], L.rampHigh[2]);
     this.blit(this.scene);
 
     this.pPrefilter.use()

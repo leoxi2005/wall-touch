@@ -162,13 +162,24 @@ uniform vec3 uCold;
 uniform vec3 uHot;
 uniform float uGlow;
 uniform float uTrailGlow;
+uniform float uRelief;      // slope exaggeration for the shading
+uniform float uAmbient;
+uniform float uShade;
+uniform float uSpec;
+uniform vec3 uDeep;         // hypsometric ramp: valley → mid → crest
+uniform vec3 uMid;
+uniform vec3 uHigh;
 
 // Four taps on the diagonals of one sim texel. The simulation runs at a fraction of the
 // output size, and a plain bilinear read leaves C0 kinks that contour extraction turns
 // into visible faceting along every line. Averaging four bilinear taps costs almost
 // nothing and hides it completely.
 vec4 smooth4(sampler2D s, vec2 uv) {
-  vec2 h = uSimTexel * 0.5;
+  // ±0.9 texel, not ±0.5. The tighter kernel was enough for the LINES, but the relief
+  // shading takes a DERIVATIVE of this field, and a derivative magnifies exactly the C0
+  // kinks bilinear upsampling leaves behind — they showed up as square glitter tiles
+  // wherever the specular caught them.
+  vec2 h = uSimTexel * 0.9;
   return 0.25 * (texture(s, uv + vec2( h.x,  h.y)) + texture(s, uv + vec2(-h.x,  h.y))
                + texture(s, uv + vec2( h.x, -h.y)) + texture(s, uv + vec2(-h.x, -h.y)));
 }
@@ -205,16 +216,43 @@ void main() {
   float wm = fwidth(vm);
   float major = 1.0 - smoothstep(0.6 * wm, 1.5 * wm, abs(fract(vm) - 0.5));
 
-  vec3 c = uCold * minor * 0.55 + uHot * major * 0.72;
-  c += uHot * minor * major * 0.35;
-  c += uCold * exp(-abs(fract(v) - 0.5) * 7.0) * uGlow;
+  // --- relief -------------------------------------------------------------------
+  // Lines alone read as a diagram. Shading the surface BETWEEN them is what turns this
+  // into something with volume: a swipe stops being a set of rings and becomes a ridge
+  // with a lit face and a shadowed one.
+  //
+  // The normal comes from screen-space derivatives of the very same field the contours
+  // are cut from, so the shading and the lines can never disagree — and it costs two
+  // instructions instead of extra taps.
+  vec2 slope = vec2(dFdx(f), dFdy(f)) * uRelief;
+  vec3 nrm = normalize(vec3(-slope.x, -slope.y, 1.0));
+  vec3 Ldir = normalize(vec3(-0.55, 0.62, 0.56));
+  float diff = clamp(dot(nrm, Ldir), 0.0, 1.0);
+  float spec = pow(clamp(reflect(-Ldir, nrm).z, 0.0, 1.0), 26.0);
 
-  // The trail recolours its own ridge: whoever drew it owns those contour lines until
-  // they fade, so several people stay legible as separate strokes.
+  // Hypsometric ramp — the colour convention of every printed relief map: dark cold in
+  // the hollows, bright cold on the crests. It also means the wall is never flat black
+  // between lines, which is what made the first version feel thin.
+  float h = clamp(f * 0.5 + 0.5, 0.0, 1.0);
+  vec3 ramp = h < 0.5 ? mix(uDeep, uMid, h * 2.0) : mix(uMid, uHigh, (h - 0.5) * 2.0);
+
+  vec3 c = ramp * (uAmbient + uShade * diff);
+  c += vec3(0.80, 0.93, 1.00) * spec * uSpec;
+
+  // --- lines on top -------------------------------------------------------------
+  // A trail marks itself out by COLOUR, at the same brightness as every other line.
+  // The first version drew trail lines about twice as hot as normal ones, which blew the
+  // stroke out to white and buried the water it was supposed to be drawn on.
   float tp = min(trail.a * 1.6, 1.0);
   vec3 tint = trail.rgb;
-  c = mix(c, tint * (minor * 0.9 + major * 1.6), tp * 0.9);
-  c += tint * smoothstep(0.05, 0.75, trail.a) * uTrailGlow;
+  vec3 colMinor = mix(uCold, tint, tp);
+  vec3 colMajor = mix(uHot, mix(uHot, tint, 0.7), tp);
+
+  c += colMinor * minor * 0.50;
+  c += colMajor * major * 0.72;
+  c += uHot * minor * major * 0.35;
+  c += colMinor * exp(-abs(fract(v) - 0.5) * 7.0) * uGlow;
+  c += tint * smoothstep(0.08, 0.8, trail.a) * uTrailGlow;
 
   fragColor = vec4(c, 1.0);
 }`;
