@@ -1,0 +1,55 @@
+name: build-release
+
+# Build the Windows installer on a REAL Windows runner: the NDI native module
+# `grandiose` compiles per-OS, so a Windows .exe simply cannot be cross-built from
+# macOS. The mac .dmg/.zip are built locally and uploaded to the same release.
+#
+# Three pins below are load-bearing — all three were found the hard way on the sister
+# project (Door Portals). Do not "modernise" them:
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    # windows-2022 = Visual Studio 2022. windows-latest ships VS 2026 (v18), which
+    # grandiose's bundled node-gyp 9.4.1 cannot detect → the native build fails.
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # grandiose's node-gyp 9.4.1 crashes under Python 3.12 (the runner default).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          GYP_MSVS_VERSION: 2022
+          PYTHON: python
+
+      - name: Build Windows app
+        run: npx electron-builder --win --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # Uploaded here rather than through electron-builder's own publisher, which hits a
+      # "draft vs release" conflict whenever the release already exists.
+      - name: Upload Windows artifacts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'v1.0.0' }}
+          files: |
+            release/*.exe
+            release/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
