@@ -10,6 +10,9 @@
 import { Program, createFBO, createDoubleFBO } from './glutil.js';
 import * as S from './shaders.js';
 
+// Must match MAXPTS in the trail splat shader.
+const MAX_STAMPS = 16;
+
 export class Waves {
   constructor(gl, blit, opts) {
     this.gl = gl;
@@ -25,7 +28,12 @@ export class Waves {
     this.simW = simW; this.simH = simH;
     this.wave = createDoubleFBO(gl, simW, simH);
 
-    const trH = Math.max(32, Math.round(simH / 3));
+    // Full sim resolution, not a fraction of it. The trail is not the smooth field it
+    // looks like: the COASTLINE is cut from it with a hard threshold, so any texel
+    // structure in the trail turns into visible stair-steps along the shore of an
+    // island a hand just drew. Coral branches (a couple of centimetres wide on the
+    // wall) need the resolution too.
+    const trH = simH;
     this.trail = createDoubleFBO(gl, Math.round(trH * this.aspect), trH);
 
     this.scene = createFBO(gl, this.width, this.height, { wrapS: gl.REPEAT });
@@ -43,6 +51,10 @@ export class Waves {
     this.pPrefilter = P(S.bloomPrefilterFrag);
     this.pBlur = P(S.blurFrag);
     this.pComposite = P(S.compositeFrag);
+
+    this.qPts = new Float32Array(MAX_STAMPS * 4);
+    this.qCols = new Float32Array(MAX_STAMPS * 3);
+    this.queued = 0;
 
     this.time = 0;
   }
@@ -67,22 +79,44 @@ export class Waves {
   }
 
   // Terrain deposited under a hand — this is the trail that outlives the touch.
+  // Stamps are queued and flushed 16 at a time (see flushDeposits): every flush is a
+  // full-screen pass over the trail target, so batching is the difference between one
+  // pass and ninety when the coral is growing.
   deposit(x, y, color, amount, radiusMul = 1) {
+    if (amount <= 0) return;
     const r = this.cfg.trailRadius * radiusMul;
+    const i = this.queued;
+    this.qPts[i * 4] = x;
+    this.qPts[i * 4 + 1] = y;
+    this.qPts[i * 4 + 2] = amount;
+    this.qPts[i * 4 + 3] = r * r;
+    this.qCols[i * 3] = color[0];
+    this.qCols[i * 3 + 1] = color[1];
+    this.qCols[i * 3 + 2] = color[2];
+    this.queued++;
+    if (this.queued === MAX_STAMPS) this.flushDeposits();
+  }
+
+  flushDeposits() {
+    if (!this.queued) return;
     this.pTrailSplat.use()
       .v2('uTexel', this.trail.texelX, this.trail.texelY)
       .tex('uTarget', this.trail.read, 0)
       .f('uAspect', this.aspect)
-      .v2('uPoint', x, y)
-      .f('uRadius', r * r)
-      .f('uAmount', amount)
       .f('uCap', this.cfg.trailCap)
-      .v3('uColor', color[0], color[1], color[2]);
+      .i('uCount', this.queued)
+      .v4v('uPts', this.qPts)
+      .v3v('uCols', this.qCols);
     this.blit(this.trail.write);
     this.trail.swap();
+    this.queued = 0;
   }
 
   step(dt) {
+    // Anything still queued from this frame's hands, coral and bridges must land BEFORE
+    // the decay pass, or it would be written on top of an already-decayed buffer and
+    // silently lost on the swap.
+    this.flushDeposits();
     this.time += dt;
     const c = this.cfg;
 
@@ -143,6 +177,8 @@ export class Waves {
       .v3('uLand', L.landColor[0], L.landColor[1], L.landColor[2])
       .f('uCoast', L.coastGlow)
       .f('uFoam', L.foam)
+      .f('uCurrent', L.shoreCurrent)
+      .f('uCurrentSpeed', L.shoreCurrentSpeed)
       .f('uLightSpin', L.lightSpin);
     this.blit(this.scene);
 

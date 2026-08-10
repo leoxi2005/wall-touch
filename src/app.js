@@ -9,6 +9,7 @@ import { createGL, makeBlitter } from './glutil.js';
 import { Waves } from './waves.js';
 import { TouchTracker } from './touch.js';
 import { Motes, Bubbles } from './motes.js';
+import { Fish, Coral } from './life.js';
 
 const cfg = await window.api.getConfig();
 document.getElementById('boot')?.remove();
@@ -75,6 +76,8 @@ const waves = new Waves(gl, blit, {
 
 const motes = new Motes(gl, { cfg: cfg.motes, aspect: ASPECT, height: dh });
 const bubbles = new Bubbles(gl, { cfg: cfg.bubbles, aspect: ASPECT, height: dh });
+const fish = new Fish(gl, { cfg: cfg.fish, aspect: ASPECT, height: dh });
+const coral = new Coral({ cfg: cfg.coral, aspect: ASPECT });
 
 // ---------------------------------------------------------------- touch colours
 
@@ -107,9 +110,14 @@ const lastPos = new Map();
 const ringClock = new Map();
 const colorId = new Map();
 
-// Everything touching the wall right now, rebuilt each frame. The motes and the land
-// bridges both need the whole set, not one track at a time.
+// Everything touching the wall right now, rebuilt each frame. The motes, the fish and
+// the land bridges all need the whole set, not one track at a time.
 const liveHands = [];
+
+// How long each hand has been essentially STILL. Moving resets it; sitting still builds
+// it up until coral seeds. Without the reset, a hand that swipes for ten seconds would
+// sprout coral all along its path, which is the stroke's job, not coral's.
+const dwell = new Map();
 
 // Tracks that vanished a moment ago, kept just long enough to stitch a stroke back
 // together. See stitchGhost() — this is what stops one continuous hand movement from
@@ -127,7 +135,7 @@ function applyTouches(dt) {
       if (tracks.has(k)) continue;
       const p = lastPos.get(k);
       if (p) ghosts.push({ x: p.x, y: p.y, cid: colorId.get(k), t: clock });
-      ringClock.delete(k); lastPos.delete(k); colorId.delete(k);
+      ringClock.delete(k); lastPos.delete(k); colorId.delete(k); dwell.delete(k);
     }
   }
   const keep = (cfg.osc?.stitchSeconds ?? 0.7);
@@ -227,7 +235,20 @@ function applyTrack(t, dt) {
 
   const color = colorFor(colorId.get(t.key) ?? t.id);
   liveHands.push({ x: t.x, y: t.y, color });
-  paintStroke(t.key, t.x, t.y, color, dt);
+  const moved = paintStroke(t.key, t.x, t.y, color, dt);
+
+  const C = cfg.coral;
+  if (moved > C.stillSpeed * dt) {
+    dwell.set(t.key, 0);
+  } else {
+    const held = (dwell.get(t.key) ?? 0) + dt;
+    if (held >= C.afterSeconds) {
+      dwell.set(t.key, C.afterSeconds - C.seedEvery);
+      coral.seed(t.x, t.y, color);
+    } else {
+      dwell.set(t.key, held);
+    }
+  }
 
   // A hand resting on the wall keeps emitting concentric rings, but on a rhythm — every
   // frame would just be a permanent bulge.
@@ -269,7 +290,11 @@ const demoHands = DEMO ? [
   // A FAST sweeper (~2 m/s, the speed of someone actually swiping). The first three
   // hands all drift slowly, which is exactly why the original time-based trail looked
   // fine in testing and left nothing at all when a real hand swept past.
-  { id: 904, key: 'd4', cx: 0.62, cy: 0.50, ax: 0.120, ay: 0.05, sx: 0.72, sy: 0.29, ph: 1.1, x: 0, y: 0, fresh: true }
+  { id: 904, key: 'd4', cx: 0.62, cy: 0.50, ax: 0.120, ay: 0.05, sx: 0.72, sy: 0.29, ph: 1.1, x: 0, y: 0, fresh: true },
+  // A hand that barely moves — the coral path. Same reasoning as the fast sweeper above:
+  // every demo hand drifting at a middling speed is exactly how the trail bug survived
+  // testing, so DEMO now covers both ends of the range.
+  { id: 905, key: 'd5', cx: 0.28, cy: 0.42, ax: 0.004, ay: 0.008, sx: 0.20, sy: 0.13, ph: 3.0, x: 0, y: 0, fresh: true }
 ] : [];
 
 function demoUpdate(dt, t) {
@@ -444,7 +469,7 @@ setInterval(() => {
     `${waves.stats}  wrap-x:on\n` +
     `NDI ${ndiRunning ? 'ON 5×[' + walls.map(w => w.cropW + 'x' + dh).join(' ') + ']' : 'OFF' + (ndiError ? ' (' + ndiError + ')' : '')}\n` +
     `OSC :${cfg.osc?.port ?? '—'}  pkts:${tracker.packets}  last:${tracker.lastAddress}\n` +
-    `touches/wall: ${tracker.counts.join(' ')}   tracked:${tracker.active}\n` +
+    `touches/wall: ${tracker.counts.join(' ')}   tracked:${tracker.active}   coral:${coral.count}\n` +
     `[h]=hud  [c]=xoá mặt nước  [b]=thả 1 giọt  ·  kéo chuột = 1 chạm giả`;
 }, 250);
 
@@ -493,10 +518,13 @@ function frame() {
   idleUpdate(dt, clock, touching > 0);
   motes.update(dt, liveHands);
   bubbles.update(dt, liveHands);
+  fish.update(dt, liveHands);
+  coral.update(dt, (x, y, col, amt, rad) => waves.deposit(x, y, col, amt, rad));
 
   waves.step(dt);
   waves.render();
   motes.draw();          // additive, on top of the graded image — NDI picks it up too
+  fish.draw();
   bubbles.draw();
 
   if (ndiRunning) {

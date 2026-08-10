@@ -60,6 +60,8 @@ export class Program {
   v2(n, x, y) { const l = this.loc(n); if (l) this.gl.uniform2f(l, x, y); return this; }
   v3(n, x, y, z) { const l = this.loc(n); if (l) this.gl.uniform3f(l, x, y, z); return this; }
   v4(n, x, y, z, w) { const l = this.loc(n); if (l) this.gl.uniform4f(l, x, y, z, w); return this; }
+  v3v(n, arr) { const l = this.loc(n); if (l) this.gl.uniform3fv(l, arr); return this; }
+  v4v(n, arr) { const l = this.loc(n); if (l) this.gl.uniform4fv(l, arr); return this; }
   tex(n, target, unit) {
     const l = this.loc(n);
     if (!l) return this;

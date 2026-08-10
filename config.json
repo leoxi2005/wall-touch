@@ -123,7 +123,9 @@
     ],
     "coastGlow": 0.35,
     "lightSpin": 0.02,
-    "foam": 1.15
+    "foam": 1.15,
+    "shoreCurrent": 0.3,
+    "shoreCurrentSpeed": 1.6
   },
   "idle": {
     "afterSeconds": 18,
@@ -178,5 +180,36 @@
     "spread": 0.07,
     "size": 0.016,
     "brightness": 0.8
+  },
+  "fish": {
+    "count": 190,
+    "shoals": 7,
+    "size": 0.03,
+    "color": [
+      0.62,
+      0.86,
+      1.0
+    ],
+    "brightness": 1.6,
+    "speed": 0.17,
+    "cohesion": 1.1,
+    "damping": 0.55,
+    "wander": 0.02,
+    "fearRadius": 0.85,
+    "fear": 0.55,
+    "burst": 2.2,
+    "calmSeconds": 2.5
+  },
+  "coral": {
+    "afterSeconds": 1.1,
+    "seedEvery": 0.5,
+    "stillSpeed": 0.1,
+    "maxTips": 80,
+    "tipLife": 2.2,
+    "speed": 0.1,
+    "wander": 2.6,
+    "branchChance": 1.5,
+    "ink": 0.65,
+    "thickness": 0.8
   }
 }

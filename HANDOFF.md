@@ -81,6 +81,9 @@ Trên nữa có 3 lớp **element** vẽ đè (không nằm trong trường đ�
 | **bọt sóng vỗ bờ** | `contourFrag` | bờ biển sáng lên theo biên độ sóng đang đập vào nó |
 | **hạt sáng trôi** (motes) | `motes.js` | luôn có; bị **hút và xoáy quanh tay**, sáng bùng lên khi tay lại gần |
 | **bong bóng** | `motes.js` | **chỉ khi có người chạm** — nổi lên từ chỗ chạm, lắc lư rồi vỡ |
+| **đàn cá** | `life.js` | luôn có, bơi theo đàn; **tán loạn khi tay lại gần** và bình tĩnh lại sau ~2.5 s |
+| **san hô** | `life.js` | mọc phân nhánh khi một bàn tay **đứng yên** > 1.1 s (đắp vào chính trường trail) |
+| **dòng điện chạy dọc bờ** | `contourFrag` | xung sáng chạy dọc đường bờ biển |
 
 Và `bridgeHands()` trong `app.js`: **hai người đứng gần nhau thì đất của họ nối lại**
 thành eo — vật liệu được đắp dọc đường nối hai bàn tay, mạnh dần khi lại gần.
@@ -136,6 +139,13 @@ Không dùng three.js → **miễn nhiễm cái bẫy `three/examples` bị elec
 9. **Lấy mẫu lưới sóng bằng bilinear thường để lại nếp gấp C0**, và contour biến nếp gấp đó
    thành **đường gãy khúc thấy rõ**. `smooth4()` (4 tap chéo nửa texel) xử lý gần như miễn phí.
 
+10. **Mỗi dấu đắp là một lượt vẽ TOÀN MÀN HÌNH lên trường trail.** San hô mọc hàng chục
+   nhánh cùng lúc và một nét quẹt đắp cả chục dấu mỗi khung — ở full res đó là hàng chục
+   triệu pixel/khung cho vài gaussian rộng vài texel. Nay `deposit()` **xếp hàng, gộp 16
+   dấu một lượt** (`flushDeposits`). Thêm chỗ đắp mới thì cứ gọi `deposit()` như thường,
+   nó tự gộp — nhưng **phải flush trước khâu decay**, không thì dấu bị ghi lên buffer đã
+   phân rã rồi mất trắng lúc swap.
+
 Thêm: **cảnh báo `READ-usage buffer ... discarded the shadow copy`** trong log là **bình thường**
 — PBO ring cố ý ghi trước khi đọc xong; Door Portals cũng vậy, không phải lỗi.
 
@@ -167,6 +177,10 @@ Thêm: **cảnh báo `READ-usage buffer ... discarded the shadow copy`** trong l
 | hạt sáng: số lượng/độ sáng/lực hút | `motes.count`, `brightness`, `pull`, `swirl`, `reach` |
 | bong bóng: nhiều/nhanh/to | `bubbles.rate`, `rise`, `size`, `life` |
 | hai người nối đất | `bridge.maxDist` (mét-tường), `bridge.ink` |
+| cá: số lượng/đàn/độ nhát | `fish.count`, `shoals`, `fearRadius`, `fear`, `burst` |
+| san hô: mọc nhanh/nhiều nhánh | `coral.speed`, `branchChance`, `maxGen`, `ink` |
+| bao lâu đứng yên thì mọc san hô | `coral.afterSeconds` |
+| xung sáng dọc bờ | `look.shoreCurrent`, `shoreCurrentSpeed` |
 
 Số đo tường lấy từ `config.json → walls` (giống Door Portals) — đổi `px` là crop NDI tự theo.
 

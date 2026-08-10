@@ -116,26 +116,35 @@ void main() {
 // RGB carries the toucher's colour, A carries deposited height. Capped, or a hand held
 // still piles up terrain forever until the contours collapse into a solid white disc.
 export const trailSplatFrag = head + /* glsl */`
+#define MAXPTS 16
 uniform sampler2D uTarget;
 uniform float uAspect;
-uniform vec3 uColor;
-uniform vec2 uPoint;
-uniform float uRadius;
-uniform float uAmount;
+uniform vec4 uPts[MAXPTS];      // xy = centre, z = amount, w = radius squared
+uniform vec3 uCols[MAXPTS];
+uniform int uCount;
 uniform float uCap;
 void main() {
-  vec2 p = vUv - uPoint;
-  p.x -= round(p.x);
-  p.x *= uAspect;
-  float g = exp(-dot(p, p) / uRadius) * uAmount;
   vec4 prev = texture(uTarget, vUv);
-  // A carries HEIGHT, RGB carries a pure colour. Clamping colour per channel (the
-  // obvious version) bleaches every trail towards white as the strong channels hit the
-  // cap first — so height is capped and the colour is blended by how much of the total
-  // deposit is new, which keeps a cyan trail cyan however long someone leans on it.
-  float newA = min(prev.a + g, uCap);
-  vec3 col = mix(prev.rgb, uColor, clamp(g / max(newA, 1e-4), 0.0, 1.0));
-  fragColor = vec4(col, newA);
+  vec3 col = prev.rgb;
+  float a = prev.a;
+  // Up to 16 stamps per pass. One stamp per pass was fine for a single hand, but coral
+  // grows dozens of tips at once and a stroke lays down a dozen stamps per frame — at
+  // full resolution that is a full-screen pass each, for a gaussian a few texels wide.
+  for (int i = 0; i < MAXPTS; i++) {
+    if (i >= uCount) break;
+    vec2 p = vUv - uPts[i].xy;
+    p.x -= round(p.x);            // periodic domain: short way round the pentagon
+    p.x *= uAspect;
+    float g = exp(-dot(p, p) / uPts[i].w) * uPts[i].z;
+    // A carries HEIGHT, RGB carries a pure colour. Clamping colour per channel (the
+    // obvious version) bleaches every trail towards white as the strong channels hit the
+    // cap first — so height is capped and the colour is blended by how much of the total
+    // deposit is new, which keeps a cyan trail cyan however long someone leans on it.
+    float newA = min(a + g, uCap);
+    col = mix(col, uCols[i], clamp(g / max(newA, 1e-4), 0.0, 1.0));
+    a = newA;
+  }
+  fragColor = vec4(col, a);
 }`;
 
 // Exponential decay, framerate-independent (exp(-dt/hold), computed on the CPU).
@@ -175,6 +184,8 @@ uniform float uSeaSpeed;
 uniform vec3 uLand;         // colour of ground that has risen above the water
 uniform float uCoast;       // brightness of the shoreline itself
 uniform float uFoam;        // extra shore brightness where waves are breaking on it
+uniform float uCurrent;     // travelling pulses of light along the shoreline
+uniform float uCurrentSpeed;
 uniform float uLightSpin;
 
 // Four taps on the diagonals of one sim texel. The simulation runs at a fraction of the
@@ -271,6 +282,16 @@ void main() {
   float surf = smoothstep(0.01, 0.16, abs(wave));
   float speck = 0.65 + 0.35 * vnoise(vec2(vUv.x * uAspect * 26.0 - uTime * 0.9, vUv.y * 26.0));
   c += vec3(0.86, 0.97, 1.00) * coast * (uCoast + uFoam * surf * speck);
+
+  // Pulses of light running along the shore. Getting a true arc-length parameter along a
+  // contour would mean tracing it; a travelling wave in x restricted to the coast band
+  // reads as exactly that, because coastlines here meander horizontally. The frequency is
+  // an integer number of laps so the pulses cross the pentagon seam without a jump.
+  const float TAU2 = 6.28318530718;
+  float lap2 = TAU2 / uAspect;
+  float pulse = sin(p.x * lap2 * 9.0 - uTime * uCurrentSpeed + f * 2.5);
+  pulse = pow(max(pulse, 0.0), 6.0);
+  c += vec3(0.55, 0.85, 1.00) * coast * pulse * uCurrent;
 
   // --- lines on top -------------------------------------------------------------
   // A trail marks itself out by COLOUR, at the same brightness as every other line.
