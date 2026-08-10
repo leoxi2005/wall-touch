@@ -78,23 +78,38 @@ export class TouchTracker {
     if (p.x == null || p.y == null || !Number.isFinite(p.id)) return;
     const wall = this.walls[wallIdx];
     const raw = Math.min(1, Math.max(0, p.x));
-    const fy = Math.min(1, Math.max(0, p.y));
+    const rawYin = Math.min(1, Math.max(0, p.y));
+    const rawY = this.flipY ? 1 - rawYin : rawYin;   // → 0 = floor, 1 = ceiling
 
-    // PER-WALL CORRECTION. The bridge's fx is only as good as the left/right edges of
-    // its warp quad, and those were eyeballed — the laser fan overshoots the room
-    // corners, so the baseline never sees where a wall actually ends. On the narrow
-    // wall the guess happened to be right; on the wide ones it is not. uScale/uOffset
-    // are the two numbers that fix it, and `k` in the app measures them for you.
-    const fx = Math.min(1.2, Math.max(-0.2, (raw - (wall.uOffset ?? 0)) * (wall.uScale ?? 1)));
+    // PER-WALL CORRECTION. The bridge's u,v is only as good as its warp quad, and that
+    // quad's left/right edges were eyeballed — the laser fan overshoots the room corners,
+    // so the baseline never sees where a wall actually ends.
+    //
+    // A quad is a PERSPECTIVE map, so its errors mix the axes: the horizontal error
+    // depends on how high the hand is. A scale+offset on x alone therefore cannot remove
+    // it — calibrate at one height and it comes back at another. uAffine is the 2D fit
+    // (6 numbers, from 4 held points) that does; uScale/uOffset stay as the older 1D
+    // fallback so an existing calibration keeps working.
+    let fx, fy;
+    const A = wall.uAffine;
+    if (A && A.length === 6) {
+      fx = A[0] + A[1] * raw + A[2] * rawY;
+      fy = A[3] + A[4] * raw + A[5] * rawY;
+    } else {
+      fx = (raw - (wall.uOffset ?? 0)) * (wall.uScale ?? 1);
+      fy = rawY;
+    }
+    fx = Math.min(1.2, Math.max(-0.2, fx));
+    fy = Math.min(1.2, Math.max(-0.2, fy));
 
     const x = wall.u0 + fx * wall.uw;            // panorama uv, wraps at 1
-    const y = this.flipY ? 1 - fy : fy;          // → 0 = floor, 1 = ceiling
+    const y = fy;
     const key = `${wallIdx}:${p.id}`;
 
     let t = this.tracks.get(key);
     if (!t) {
       t = {
-        key, wall: wallIdx, id: p.id, raw,
+        key, wall: wallIdx, id: p.id, raw, rawY,
         x, y, vx: 0, vy: 0, speed: 0,
         born: this.now, lastSeen: this.now, fresh: true, moved: 0
       };
@@ -112,7 +127,7 @@ export class TouchTracker {
     t.vx = t.vx * 0.5 + (dx / dt) * 0.5;
     t.vy = t.vy * 0.5 + (dy / dt) * 0.5;
     t.moved += Math.hypot(dx, dy);
-    t.x = x; t.y = y; t.raw = raw;
+    t.x = x; t.y = y; t.raw = raw; t.rawY = rawY;
     t.speed = p.v ?? 0;
     t.lastSeen = this.now;
     t.fresh = false;

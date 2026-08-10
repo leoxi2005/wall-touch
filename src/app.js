@@ -10,7 +10,7 @@ import { Waves } from './waves.js';
 import { TouchTracker } from './touch.js';
 import { Motes, Bubbles } from './motes.js';
 import { Fish, Coral } from './life.js';
-import { Calib } from './calib.js';
+import { Calib, MARKS } from './calib.js';
 
 const cfg = await window.api.getConfig();
 document.getElementById('boot')?.remove();
@@ -52,6 +52,7 @@ const walls = [];
       uw: w.px / PX_W,
       uScale: w.uScale ?? 1,
       uOffset: w.uOffset ?? 0,
+      uAffine: Array.isArray(w.uAffine) && w.uAffine.length === 6 ? w.uAffine.slice() : null,
       cropX0: accCrop,
       cropW: Math.max(2, bnd - accCrop),
       ndiName: `DOOR-WALL-${i + 1}`,
@@ -335,11 +336,13 @@ function demoUpdate(dt, t) {
   for (const h of demoHands) {
     let x, y;
     if (h.calibBot) {
-      // Runs the calibrate → solve → save chain once, then parks. Left running it would
-      // keep re-solving from its own faked raw values and overwrite a real calibration.
+      // Walks the four crosses on wall 2, holding on each, then parks. It exists so the
+      // whole capture → 2D fit → save chain runs every time DEMO does, instead of being
+      // first tried by someone standing in a room 10 m from the keyboard.
       const w = walls[1];
-      x = w.u0 + (Math.floor(t / 5) % 2 === 0 ? 0.25 : 0.75) * w.uw;
-      y = calibBotDone ? 0.5 : 0.5;
+      const m = MARKS[Math.floor(t / 4) % MARKS.length];
+      x = w.u0 + m.fx * w.uw;
+      y = m.fy;
       if (calibBotDone) { h.x = x; h.y = y; continue; }
     } else {
       x = (h.cx + h.ax * Math.sin(t * h.sx + h.ph) + 1) % 1;
@@ -349,7 +352,7 @@ function demoUpdate(dt, t) {
     const loc = locate(x);
     applyTrack({
       id: h.id, key: h.key, x, y,
-      wall: loc.wall, raw: loc.raw,
+      wall: loc.wall, raw: loc.raw, rawY: y,
       vx: h.fresh ? 0 : dx / dt,
       vy: h.fresh ? 0 : (y - h.y) / dt,
       fresh: h.fresh
@@ -504,84 +507,113 @@ function collectOne() {
 // never could.
 let lastTouch = null;
 let calibMsg = 'chưa hiệu chỉnh';
-const capture = { wall: -1, left: null, right: null };
-const calDwell = new Map();     // track key → seconds held still on a mark
 let calFlash = 0;               // seconds of "captured!" feedback left to draw
 let calibBotDone = false;
 
-// AUTO-CAPTURE. The first version needed someone to press a key at the exact moment a
-// hand was on the mark — which is impossible alone, because the hand is on a wall and
-// the keyboard is across the room. Holding still for a moment is something the person at
-// the wall can do without help, and the wall itself confirms it.
+// Which marks on which wall have been held so far. `taken[i]` is the AVERAGED raw
+// reading for mark i — averaged, because a single instantaneous sample carries the
+// sensor's jitter straight into the fit, and at 5 m wide a thousandth of the width is
+// half a centimetre.
+const capture = { wall: -1, taken: new Array(MARKS.length).fill(null) };
+const calDwell = new Map();     // track key → { held, side, sx, sy, n }
+
 const CAL_HOLD = 1.4;           // seconds of stillness before a mark is taken
-const CAL_NEAR = 0.16;          // how close to a mark counts, as a fraction of wall width
+const CAL_NEAR = 0.13;          // how close to a mark counts (wall widths / heights)
 const CAL_STILL = 0.09;         // wall-heights/second below which a hand counts as still
+
+function resetCapture(wall) {
+  capture.wall = wall;
+  capture.taken = new Array(MARKS.length).fill(null);
+}
 
 function calibTrack(t, dt, moved) {
   if (!calib.on) return;
   const w = walls[t.wall];
   if (!w) return;
 
-  // Which mark is this hand at? Judged on the position the app currently believes, which
-  // is exactly what is being corrected — fine, because the error is far smaller than the
-  // gap between the two marks.
   const fx = (t.x - w.u0) / w.uw;
-  const dL = Math.abs(fx - 0.25), dR = Math.abs(fx - 0.75);
-  const side = dL < dR ? 'left' : 'right';
-  const near = Math.min(dL, dR);
-
-  if (near > CAL_NEAR || moved > CAL_STILL * dt) { calDwell.set(t.key, 0); return; }
-
-  const held = (calDwell.get(t.key) ?? 0) + dt;
-  calDwell.set(t.key, held);
-  if (held < CAL_HOLD) return;
-  calDwell.set(t.key, -1.0);     // cooldown, so one long hold captures once
-
-  if (capture.wall !== t.wall) { capture.wall = t.wall; capture.left = null; capture.right = null; }
-  capture[side] = t.raw;
-  calFlash = 1.0;
-  calibMsg = `tường ${t.wall + 1}: đã bắt vạch ${side === 'left' ? 'XANH' : 'CAM'} (${t.raw.toFixed(4)})` +
-    (capture.left != null && capture.right != null ? ' → đang áp dụng…' : ' — mời sang vạch kia');
-
-  if (capture.left != null && capture.right != null) applyCalib();
-}
-
-// Manual override, for when someone IS at the keyboard.
-function captureRef(which) {
-  if (!lastTouch) { calibMsg = 'chưa thấy chạm nào — đặt tay lên vạch rồi bấm lại'; return; }
-  const w = lastTouch.wall;
-  if (capture.wall !== w) { capture.wall = w; capture.left = null; capture.right = null; }
-  capture[which] = lastTouch.raw;
-  calFlash = 1.0;
-  calibMsg = `tường ${w + 1}: ${which}=${lastTouch.raw.toFixed(4)}` +
-    (capture.left != null && capture.right != null ? ' → bấm S để áp dụng' : ' — còn vạch kia');
-}
-
-// Two marks at 25% and 75% pin down BOTH unknowns at once — a shifted quad (offset) and
-// a wrongly-sized one (scale). One point could never separate them.
-function applyCalib() {
-  if (capture.wall < 0 || capture.left == null || capture.right == null) {
-    calibMsg = 'cần cả 2 vạch (xanh và cam) trên CÙNG một tường';
-    return;
+  let best = -1, bestD = CAL_NEAR;
+  for (let i = 0; i < MARKS.length; i++) {
+    // Distance measured in wall-heights on both axes, so "near" means the same physical
+    // distance sideways as it does vertically.
+    const d = Math.hypot((fx - MARKS[i].fx) * w.uw * ASPECT, t.y - MARKS[i].fy);
+    if (d < bestD) { bestD = d; best = i; }
   }
-  const d = capture.right - capture.left;
-  if (Math.abs(d) < 0.05) { calibMsg = 'hai điểm quá gần nhau — đứng đúng 2 vạch'; return; }
-  const scale = 0.5 / d;
-  const offset = capture.left - 0.25 / scale;
-  const wall = walls[capture.wall];
-  const idx = capture.wall;
-  wall.uScale = scale; wall.uOffset = offset;
 
-  const partial = { walls: walls.map(x => ({ uScale: x.uScale, uOffset: x.uOffset })) };
+  let st = calDwell.get(t.key);
+  if (best < 0 || moved > CAL_STILL * dt) { calDwell.delete(t.key); return; }
+  if (!st || st.mark !== best) { st = { mark: best, held: 0, sx: 0, sy: 0, n: 0 }; calDwell.set(t.key, st); }
+  if (st.held < 0) return;      // already captured this hold; wait for the hand to move off
+
+  st.held += dt;
+  st.sx += t.raw; st.sy += t.rawY; st.n++;
+  if (st.held < CAL_HOLD) return;
+  st.held = -1;
+
+  if (capture.wall !== t.wall) resetCapture(t.wall);
+  capture.taken[best] = { raw: st.sx / st.n, rawY: st.sy / st.n };
+  calFlash = 1.0;
+
+  const done = capture.taken.filter(Boolean).length;
+  calibMsg = `tường ${t.wall + 1}: đã bắt ${done}/${MARKS.length} điểm`;
+  if (done === MARKS.length) applyCalib();
+}
+
+// Least squares through a 3x3 normal-equation solve. With four points at the corners of
+// a rectangle this is well conditioned, and using all four (rather than picking three)
+// averages out whatever wobble survived the hold.
+function solve3(M, rhs) {
+  const a = [M[0].slice(), M[1].slice(), M[2].slice()];
+  const b = rhs.slice();
+  for (let c = 0; c < 3; c++) {
+    let piv = c;
+    for (let r = c + 1; r < 3; r++) if (Math.abs(a[r][c]) > Math.abs(a[piv][c])) piv = r;
+    if (Math.abs(a[piv][c]) < 1e-12) return null;
+    if (piv !== c) { const tt = a[piv]; a[piv] = a[c]; a[c] = tt; const tb = b[piv]; b[piv] = b[c]; b[c] = tb; }
+    for (let r = 0; r < 3; r++) {
+      if (r === c) continue;
+      const f = a[r][c] / a[c][c];
+      for (let k = c; k < 3; k++) a[r][k] -= f * a[c][k];
+      b[r] -= f * b[c];
+    }
+  }
+  return [b[0] / a[0][0], b[1] / a[1][1], b[2] / a[2][2]];
+}
+
+function applyCalib() {
+  const pts = [];
+  for (let i = 0; i < MARKS.length; i++) {
+    if (capture.taken[i]) pts.push({ ...capture.taken[i], tx: MARKS[i].fx, ty: MARKS[i].fy });
+  }
+  const idx = capture.wall;
+  if (idx < 0 || pts.length < 3) { calibMsg = `cần ít nhất 3 điểm (đang có ${pts.length})`; return; }
+
+  const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  const rx = [0, 0, 0], ry = [0, 0, 0];
+  for (const p of pts) {
+    const v = [1, p.raw, p.rawY];
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) M[i][j] += v[i] * v[j];
+      rx[i] += v[i] * p.tx;
+      ry[i] += v[i] * p.ty;
+    }
+  }
+  const ax = solve3(M, rx), ay = solve3(M, ry);
+  if (!ax || !ay) { calibMsg = 'các điểm quá gần nhau — đứng đúng 4 dấu chữ thập'; return; }
+
+  const wall = walls[idx];
+  wall.uAffine = [ax[0], ax[1], ax[2], ay[0], ay[1], ay[2]];
+
+  const partial = { walls: walls.map(x => ({ uAffine: x.uAffine ?? null })) };
   window.api.saveConfig(partial).then((r) => {
     calibMsg = r?.ok
-      ? `✅ tường ${idx + 1}: scale=${scale.toFixed(4)} offset=${offset.toFixed(4)} — ĐÃ LƯU → ${r.path}`
-      : `áp dụng rồi nhưng LƯU HỎNG: ${r?.error} (chép tay vào config.json)`;
-    console.log(`[calib] wall ${idx + 1} uScale=${scale.toFixed(5)} uOffset=${offset.toFixed(5)}`);
+      ? `✅ tường ${idx + 1}: đã hiệu chỉnh 2 chiều (${pts.length} điểm) — ĐÃ LƯU`
+      : `áp dụng rồi nhưng LƯU HỎNG: ${r?.error}`;
+    console.log(`[calib] wall ${idx + 1} uAffine=[${wall.uAffine.map(v => v.toFixed(5)).join(', ')}]`);
   });
   calFlash = 2.0;
-  calibBotDone = true;      // DEMO's calibration robot has proved the chain; park it
-  capture.wall = -1; capture.left = null; capture.right = null;
+  calibBotDone = true;
+  resetCapture(-1);
 }
 
 // ---------------------------------------------------------------- HUD
@@ -597,12 +629,11 @@ window.addEventListener('keydown', (e) => {
   if (k === 'k') {
     calib.on = !calib.on;
     calibMsg = calib.on
-      ? 'ĐANG HIỆU CHỈNH — đặt tay lên vạch XANH, GIỮ YÊN 1.5 giây, rồi sang vạch CAM'
+      ? 'ĐANG HIỆU CHỈNH — đặt tay lên từng dấu CHỮ THẬP, giữ yên 1.5 giây. Đủ 4 dấu là xong.'
       : 'chưa hiệu chỉnh';
   }
-  if (e.key === '[') captureRef('left');
-  if (e.key === ']') captureRef('right');
-  if (k === 's' && calib.on) applyCalib();
+  if (k === 's' && calib.on) applyCalib();          // force a fit from whatever is held
+  if (k === 'r' && calib.on) { resetCapture(-1); calibMsg = 'đã xoá các điểm đang bắt'; }
 });
 
 setInterval(() => {
@@ -613,9 +644,9 @@ setInterval(() => {
     `NDI ${ndiRunning ? 'ON 5×[' + walls.map(w => w.cropW + 'x' + dh).join(' ') + ']' : 'OFF' + (ndiError ? ' (' + ndiError + ')' : '')}\n` +
     `OSC :${cfg.osc?.port ?? '—'}  pkts:${tracker.packets}  last:${tracker.lastAddress}\n` +
     `touches/wall: ${tracker.counts.join(' ')}   tracked:${tracker.active}   coral:${coral.count}\n` +
-    `calib ${calib.on ? 'ON' : 'off'}  ${walls.map((w, i) => `W${i + 1}:${w.uScale.toFixed(3)}/${w.uOffset.toFixed(3)}`).join(' ')}\n` +
+    `calib ${calib.on ? 'ON' : 'off'}  ${walls.map((w, i) => `W${i + 1}:${w.uAffine ? '2D✓' : (w.uScale !== 1 || w.uOffset !== 0 ? '1D' : '—')}`).join(' ')}\n` +
     `        ${calibMsg}\n` +
-    `[h]=hud  [c]=xoá  [b]=giọt  [k]=hiệu chỉnh  [ ] =bắt vạch  [s]=lưu  ·  kéo chuột = chạm giả`;
+    `[h]=hud  [c]=xoá  [b]=giọt  [k]=hiệu chỉnh  [s]=ép tính  [r]=bắt lại  ·  kéo chuột = chạm giả`;
 }, 250);
 
 // Health line every 5 s — on the show machine the HUD is on a projector nobody can

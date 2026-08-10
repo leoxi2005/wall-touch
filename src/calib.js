@@ -26,6 +26,17 @@ const FS = `#version 300 es
 
 const FLOATS = 5;   // x, y, r, g, b
 
+// The four points every wall is calibrated from: the corners of a generous rectangle.
+// Corners rather than a line because the fit has to separate horizontal error from the
+// part of it that depends on height, and 30%/70% of a 2.4 m wall is 72 cm and 168 cm —
+// both comfortable to reach.
+export const MARKS = [
+  { fx: 0.25, fy: 0.30, col: [0.10, 1.00, 0.30] },   // green   — low left
+  { fx: 0.75, fy: 0.30, col: [1.00, 0.45, 0.02] },   // orange  — low right
+  { fx: 0.25, fy: 0.70, col: [0.30, 0.60, 1.00] },   // blue    — high left
+  { fx: 0.75, fy: 0.70, col: [1.00, 0.20, 0.60] }    // pink    — high right
+];
+
 // Calibration marks are drawn ADDITIVELY, so over a bright stretch of water a green mark
 // comes out yellow and an orange one comes out pink — useless when the whole instruction
 // is "stand on the GREEN one". Dimming the scene first is not decoration: it is what
@@ -113,6 +124,25 @@ export class Calib {
     }
   }
 
+  // A cross marks a POINT, which is what a 2D fit needs. Two vertical bars could only
+  // ever pin down horizontal error; the quad's error mixes the axes, so the marks have to
+  // say "put your hand exactly HERE", not "somewhere on this line".
+  _cross(x, y, r, g, b, widthUv, sizeUv) {
+    this._bar(x, y - sizeUv, y + sizeUv, r, g, b, widthUv);
+    const n = 5;
+    const halfX = sizeUv / this.aspect;
+    for (let i = 0; i < n; i++) {
+      const yy = y + (i - (n - 1) / 2) * widthUv / n;
+      if (this.count + 2 > this.cap) return;
+      const d = this.data;
+      let o = this.count * FLOATS;
+      d[o] = ((x - halfX) + 1) % 1; d[o + 1] = yy; d[o + 2] = r; d[o + 3] = g; d[o + 4] = b;
+      o += FLOATS;
+      d[o] = ((x + halfX) + 1) % 1; d[o + 1] = yy; d[o + 2] = r; d[o + 3] = g; d[o + 4] = b;
+      this.count += 2;
+    }
+  }
+
   // hands: [{ x }] in panorama uv. `wallOf` maps a hand to its wall index for colouring.
   // `capture` is which marks have been taken on which wall; `flash` counts down after a
   // capture. Both are drawn ON THE WALL, because the person doing the calibration is
@@ -128,21 +158,16 @@ export class Calib {
       // corners of the room, the projector mapping is off, not the sensor.
       this._bar(w.u0, 0.0, 1.0, 0.10, 0.16, 0.22, wUv);
 
-      // The two reference marks. 25% and 75% of the wall are far enough apart that a
-      // small standing error barely moves the fit, and both are easy to find with a tape
-      // measure from the nearest corner.
-      const mine = capture && capture.wall === w.index;
-      const gotL = mine && capture.left != null;
-      const gotR = mine && capture.right != null;
-      // A taken mark turns white and grows a second bar beside it — unmistakable from
-      // across the room, and it tells you to move to the other one.
-      this._bar(w.u0 + 0.25 * w.uw, 0.05, 0.95,
-        gotL ? 1.0 : 0.10, 1.00, gotL ? 1.0 : 0.30, wUv * (gotL ? 3.0 : 2.0));
-      this._bar(w.u0 + 0.75 * w.uw, 0.05, 0.95,
-        1.00, gotR ? 1.0 : 0.45, gotR ? 1.0 : 0.02, wUv * (gotR ? 3.0 : 2.0));
-
-      // Centre tick, short — a quick sanity check that needs no measuring at all.
-      this._bar(w.u0 + 0.5 * w.uw, 0.44, 0.56, 0.35, 0.45, 0.55, wUv);
+      const taken = (capture && capture.wall === w.index) ? capture.taken : null;
+      for (let i = 0; i < MARKS.length; i++) {
+        const m = MARKS[i];
+        const got = taken && taken[i];
+        // Colour says which one to go to next: unvisited marks keep their colour, a
+        // captured one turns white and grows.
+        const col = got ? [1.0, 1.0, 1.0] : m.col;
+        this._cross(w.u0 + m.fx * w.uw, m.fy, col[0], col[1], col[2],
+          wUv * (got ? 3.0 : 2.0), 0.11);
+      }
     }
 
     // Where the app currently believes each hand is. The gap between this and the actual

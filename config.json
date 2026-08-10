@@ -21,7 +21,8 @@
         0.5
       ],
       "uScale": 1.0,
-      "uOffset": 0.0
+      "uOffset": 0.0,
+      "uAffine": null
     },
     {
       "px": 2520,
@@ -34,7 +35,8 @@
         0.7938
       ],
       "uScale": 1.0,
-      "uOffset": 0.0
+      "uOffset": 0.0,
+      "uAffine": null
     },
     {
       "px": 1980,
@@ -46,7 +48,8 @@
         0.7038
       ],
       "uScale": 1.0,
-      "uOffset": 0.0
+      "uOffset": 0.0,
+      "uAffine": null
     },
     {
       "px": 2250,
@@ -59,7 +62,8 @@
         0.799
       ],
       "uScale": 1.0,
-      "uOffset": 0.0
+      "uOffset": 0.0,
+      "uAffine": null
     },
     {
       "px": 2790,
@@ -72,7 +76,8 @@
         0.7895
       ],
       "uScale": 1.0,
-      "uOffset": 0.0
+      "uOffset": 0.0,
+      "uAffine": null
     }
   ],
   "osc": {

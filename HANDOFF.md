@@ -259,18 +259,23 @@ homography. Sai số warp nằm im suốt cho tới khi app này dùng u,v.
 **Cách sửa — ngay trong app, không đụng vào bridge** (giữ nguyên setup zone đang chạy tốt
 của Door Portals):
 
-1. Bấm **`k`** (hoặc chạy với `CALIB=1`) → mặt nước tối lại, mỗi tường hiện
-   **vạch XANH LÁ ở 25%** và **vạch CAM ở 75%** bề rộng tường. Vạch **trắng** = chỗ app
-   đang nghĩ tay bạn ở đó; **khoảng cách giữa vạch trắng và tay bạn CHÍNH LÀ sai số**.
-2. Đứng đúng vạch **xanh lá**, đặt tay lên tường, bấm **`[`**.
-3. Đứng đúng vạch **cam**, đặt tay lên tường, bấm **`]`**.
-4. **Không cần bấm gì cả** — giữ tay yên trên vạch ~1.4 s là app tự bắt (vạch bắt được
-   sẽ **chuyển sang trắng và dày lên**, cả phòng nháy một cái). Bắt đủ 2 vạch thì tự
-   giải, tự áp dụng, tự lưu. Lặp cho từng tường.
-   (Nếu có người ngồi máy thì vẫn dùng được `[` `]` `s` như cũ.)
+1. Bấm **`k`** (hoặc chạy với `CALIB=1`) → mặt nước tối lại, mỗi tường hiện **4 dấu chữ
+   thập** ở 25%/75% bề ngang × 30%/70% chiều cao (≈ 72 cm và 168 cm trên tường 2.40 m).
+   Vạch **trắng** = chỗ app đang nghĩ tay bạn ở đó.
+2. Đặt tay lên **từng dấu**, **giữ yên ~1.4 s**. Dấu bắt được **chuyển trắng và to lên**,
+   cả phòng nháy một cái.
+3. Đủ **4 dấu** → app tự khớp, tự áp dụng, **tự lưu**. Sang tường tiếp theo.
+   (`s` = ép tính với số điểm đang có, tối thiểu 3. `r` = xoá làm lại.)
 
-Hai điểm ở 25%/75% ghim được **cả hai ẩn số cùng lúc** — quad bị dịch (offset) và quad
-sai bề rộng (scale) — mà một điểm thì không bao giờ tách được.
+**⚠️ VÌ SAO PHẢI LÀ 4 ĐIỂM CHỨ KHÔNG PHẢI 2** — bài học 2026-08-11: bản đầu chỉ chỉnh
+`x` bằng scale+offset, hiện trường báo **vẫn lệch 3–4 cm**. Warp quad của bridge là phép
+biến đổi **phối cảnh**, nên sai số của nó **trộn x với y**: sai lệch ngang phụ thuộc vào
+**độ cao của bàn tay**. Chỉnh ở một tầm cao thì tầm khác lại lệch. Bốn điểm ở 4 góc một
+hình chữ nhật khớp được **affine 2 chiều** (6 số, `walls[i].uAffine`) — đó mới là thứ khử
+được phần phụ thuộc chéo đó.
+Giá trị `raw` mỗi điểm là **trung bình cả lúc giữ tay**, không phải một mẫu tức thời: ở
+tường rộng 5.6 m thì một phần nghìn bề rộng đã là nửa centimet.
+`uScale`/`uOffset` (1 chiều) vẫn còn làm phương án lùi; có `uAffine` thì nó được ưu tiên.
 
 **⚠️ File lưu KHÔNG nằm cạnh app.** Bản đóng gói có `config.json` **bên trong `app.asar`**
 — file nén, ghi vào là `ENOENT` (đã dính đúng lỗi này tại hiện trường 2026-08-11). Hiệu
