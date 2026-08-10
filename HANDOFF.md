@@ -173,6 +173,7 @@ Thêm: **cảnh báo `READ-usage buffer ... discarded the shadow copy`** trong l
 | bờ biển sáng/tối | `look.coastGlow`; màu đất `look.landColor` |
 | đèn quay nhanh/chậm | `look.lightSpin` |
 | nối nét khi bridge đổi id | `osc.stitchRadius` (mét-tường), `osc.stitchSeconds` |
+| **chạm bị lệch trên một tường** | `walls[i].uScale` / `uOffset` — bấm `k` để đo (mục 7b-bis) |
 | bọt vỗ bờ mạnh/nhẹ | `look.foam` |
 | hạt sáng: số lượng/độ sáng/lực hút | `motes.count`, `brightness`, `pull`, `swirl`, `reach` |
 | bong bóng: nhiều/nhanh/to | `bubbles.rate`, `rise`, `size`, `life` |
@@ -233,6 +234,42 @@ Console. Đặt biến bằng `set TÊN=1` trước khi chạy, xoá bằng `set
 
 **Nếu app hỏng lúc khởi động thì KHÔNG còn màn hình đen nữa** — từ v1.0.1 mọi lỗi renderer
 được in đè lên toàn màn hình bằng chữ đỏ đọc được từ xa (`#fatal` trong `index.html`).
+
+## 7b-bis. 🎯 HIỆU CHỈNH VỊ TRÍ CHẠM (u,v lệch) — 2026-08-11
+
+**Triệu chứng tại hiện trường:** tường 1 (180 cm) khớp hoàn toàn; 4 tường còn lại track
+đúng nhưng **lệch một chút so với bàn tay**.
+
+**Nguyên nhân:** toạ độ liên tục `u,v` của bridge đi qua **warp quad**, mà HANDOFF của
+bridge đã ghi: *"mép trái/phải quad là ước lượng bằng mắt vì tia laser đi vượt qua góc
+phòng nên baseline không hề thấy mép tường"*. Tường 1 hẹp nên đoán trúng; tường rộng
+4.4–6.2 m thì không.
+
+**Vì sao trước giờ không ai thấy:** Door Portals chỉ dùng `/zone/`, mà bridge test zone
+bằng `pointInPoly` trên **toạ độ thế giới (mét)** — `pipeline.js:518`, **không** qua
+homography. Sai số warp nằm im suốt cho tới khi app này dùng u,v.
+
+**Cách sửa — ngay trong app, không đụng vào bridge** (giữ nguyên setup zone đang chạy tốt
+của Door Portals):
+
+1. Bấm **`k`** (hoặc chạy với `CALIB=1`) → mặt nước tối lại, mỗi tường hiện
+   **vạch XANH LÁ ở 25%** và **vạch CAM ở 75%** bề rộng tường. Vạch **trắng** = chỗ app
+   đang nghĩ tay bạn ở đó; **khoảng cách giữa vạch trắng và tay bạn CHÍNH LÀ sai số**.
+2. Đứng đúng vạch **xanh lá**, đặt tay lên tường, bấm **`[`**.
+3. Đứng đúng vạch **cam**, đặt tay lên tường, bấm **`]`**.
+4. Bấm **`s`** → app giải ra `uScale`/`uOffset` cho tường đó, áp dụng ngay và **ghi thẳng
+   vào `config.json`**. Lặp cho từng tường.
+
+Hai điểm ở 25%/75% ghim được **cả hai ẩn số cùng lúc** — quad bị dịch (offset) và quad
+sai bề rộng (scale) — mà một điểm thì không bao giờ tách được.
+
+**Đọc kết quả để biết hỏng ở đâu:** `uScale ≠ 1` → bề rộng quad sai; `uOffset ≠ 0` → quad
+bị dịch, hoặc sensor **không gắn đúng giữa tường** (HANDOFF bridge mục 15 ghi đây là ẩn số
+duy nhất không suy được từ dữ liệu — chủ dự án xác nhận bằng miệng, chưa đo).
+
+**Muốn sửa tận gốc** thì kéo lại `warp.corners` của 4 mặt đó trong LiDAR Bridge cho khớp
+mép tường thật. Nhưng làm trong app nhanh hơn nhiều và không có rủi ro động vào preset
+đang chạy tốt.
 
 ## 7c. Vệt trail trên tường thật khác gì so với kéo chuột
 

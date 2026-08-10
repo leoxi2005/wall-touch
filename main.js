@@ -110,6 +110,23 @@ app.whenReady().then(() => {
 
 ipcMain.handle('config:get', () => config);
 
+// Persist calibration (and anything else the app edits) back to config.json. Without
+// this a calibration done on site would be lost the next time the app starts, which is
+// exactly when you least want to redo it.
+ipcMain.handle('config:save', (_e, partial) => {
+  try {
+    const p = path.join(__dirname, 'config.json');
+    const disk = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (partial.walls) {
+      partial.walls.forEach((pw, i) => { if (disk.walls[i]) Object.assign(disk.walls[i], pw); });
+    }
+    fs.writeFileSync(p, JSON.stringify(disk, null, 2));
+    return { ok: true, path: p };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 ipcMain.handle('ndi:available', () => ndi.isAvailable());
 
 ipcMain.handle('ndi:start', async (_e, cfg) => {

@@ -77,8 +77,15 @@ export class TouchTracker {
   _commit(wallIdx, p) {
     if (p.x == null || p.y == null || !Number.isFinite(p.id)) return;
     const wall = this.walls[wallIdx];
-    const fx = Math.min(1, Math.max(0, p.x));
+    const raw = Math.min(1, Math.max(0, p.x));
     const fy = Math.min(1, Math.max(0, p.y));
+
+    // PER-WALL CORRECTION. The bridge's fx is only as good as the left/right edges of
+    // its warp quad, and those were eyeballed — the laser fan overshoots the room
+    // corners, so the baseline never sees where a wall actually ends. On the narrow
+    // wall the guess happened to be right; on the wide ones it is not. uScale/uOffset
+    // are the two numbers that fix it, and `k` in the app measures them for you.
+    const fx = Math.min(1.2, Math.max(-0.2, (raw - (wall.uOffset ?? 0)) * (wall.uScale ?? 1)));
 
     const x = wall.u0 + fx * wall.uw;            // panorama uv, wraps at 1
     const y = this.flipY ? 1 - fy : fy;          // → 0 = floor, 1 = ceiling
@@ -87,7 +94,7 @@ export class TouchTracker {
     let t = this.tracks.get(key);
     if (!t) {
       t = {
-        key, wall: wallIdx, id: p.id,
+        key, wall: wallIdx, id: p.id, raw,
         x, y, vx: 0, vy: 0, speed: 0,
         born: this.now, lastSeen: this.now, fresh: true, moved: 0
       };
@@ -105,7 +112,7 @@ export class TouchTracker {
     t.vx = t.vx * 0.5 + (dx / dt) * 0.5;
     t.vy = t.vy * 0.5 + (dy / dt) * 0.5;
     t.moved += Math.hypot(dx, dy);
-    t.x = x; t.y = y;
+    t.x = x; t.y = y; t.raw = raw;
     t.speed = p.v ?? 0;
     t.lastSeen = this.now;
     t.fresh = false;

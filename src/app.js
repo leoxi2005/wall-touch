@@ -10,6 +10,7 @@ import { Waves } from './waves.js';
 import { TouchTracker } from './touch.js';
 import { Motes, Bubbles } from './motes.js';
 import { Fish, Coral } from './life.js';
+import { Calib } from './calib.js';
 
 const cfg = await window.api.getConfig();
 document.getElementById('boot')?.remove();
@@ -49,6 +50,8 @@ const walls = [];
       index: i,
       u0: accPx / PX_W,
       uw: w.px / PX_W,
+      uScale: w.uScale ?? 1,
+      uOffset: w.uOffset ?? 0,
       cropX0: accCrop,
       cropW: Math.max(2, bnd - accCrop),
       ndiName: `DOOR-WALL-${i + 1}`,
@@ -78,6 +81,10 @@ const motes = new Motes(gl, { cfg: cfg.motes, aspect: ASPECT, height: dh });
 const bubbles = new Bubbles(gl, { cfg: cfg.bubbles, aspect: ASPECT, height: dh });
 const fish = new Fish(gl, { cfg: cfg.fish, aspect: ASPECT, height: dh });
 const coral = new Coral({ cfg: cfg.coral, aspect: ASPECT });
+const calib = new Calib(gl, { walls, aspect: ASPECT });
+// CALIB=1 starts with the marks already up — on site you want them on the wall before
+// you walk over to it, not after finding a keyboard.
+calib.on = typeof process !== 'undefined' && process.env?.CALIB === '1';
 
 // ---------------------------------------------------------------- touch colours
 
@@ -235,6 +242,7 @@ function applyTrack(t, dt) {
 
   const color = colorFor(colorId.get(t.key) ?? t.id);
   liveHands.push({ x: t.x, y: t.y, color });
+  lastTouch = t;
   const moved = paintStroke(t.key, t.x, t.y, color, dt);
 
   const C = cfg.coral;
@@ -450,6 +458,47 @@ function collectOne() {
   return true;
 }
 
+// ---------------------------------------------------------------- calibration
+
+// Two-point fit. Stand on the GREEN mark, press [ ; stand on the ORANGE mark, press ] .
+// Those marks sit at 25% and 75% of the wall, so the pair pins down BOTH unknowns at
+// once — a shifted quad (offset) and a wrongly-sized one (scale) — which a single point
+// never could.
+let lastTouch = null;
+let calibMsg = 'chưa hiệu chỉnh';
+const capture = { wall: -1, left: null, right: null };
+
+function captureRef(which) {
+  if (!lastTouch) { calibMsg = 'chưa thấy chạm nào — đặt tay lên vạch rồi bấm lại'; return; }
+  const w = lastTouch.wall;
+  if (capture.wall !== w) { capture.wall = w; capture.left = null; capture.right = null; }
+  capture[which] = lastTouch.raw;
+  calibMsg = `tường ${w + 1}: ${which}=${lastTouch.raw.toFixed(4)}` +
+    (capture.left != null && capture.right != null ? ' → bấm S để áp dụng' : ' — còn vạch kia');
+}
+
+function applyCalib() {
+  if (capture.wall < 0 || capture.left == null || capture.right == null) {
+    calibMsg = 'cần cả 2 vạch (xanh = [ , cam = ] ) trên CÙNG một tường';
+    return;
+  }
+  const d = capture.right - capture.left;
+  if (Math.abs(d) < 0.05) { calibMsg = 'hai điểm quá gần nhau — đứng đúng 2 vạch'; return; }
+  const scale = 0.5 / d;
+  const offset = capture.left - 0.25 / scale;
+  const w = walls[capture.wall];
+  w.uScale = scale; w.uOffset = offset;
+
+  const partial = { walls: walls.map(x => ({ uScale: x.uScale, uOffset: x.uOffset })) };
+  window.api.saveConfig(partial).then((r) => {
+    calibMsg = r?.ok
+      ? `tường ${capture.wall + 1}: scale=${scale.toFixed(4)} offset=${offset.toFixed(4)} — ĐÃ LƯU`
+      : `áp dụng rồi nhưng LƯU HỎNG: ${r?.error} (chép tay vào config.json)`;
+    console.log(`[calib] wall ${capture.wall + 1} uScale=${scale.toFixed(5)} uOffset=${offset.toFixed(5)}`);
+  });
+  capture.wall = -1; capture.left = null; capture.right = null;
+}
+
 // ---------------------------------------------------------------- HUD
 
 const hudEl = document.getElementById('hud');
@@ -460,6 +509,10 @@ window.addEventListener('keydown', (e) => {
   if (k === 'h') { hudOn = !hudOn; hudEl.classList.toggle('off', !hudOn); }
   if (k === 'c') waves.clear();
   if (k === 'b') waves.impulse(Math.random(), 0.3 + Math.random() * 0.4, W.dropAmp, 1.0);
+  if (k === 'k') { calib.on = !calib.on; calibMsg = calib.on ? 'ĐANG HIỆU CHỈNH — đứng vào vạch XANH bấm [ , vạch CAM bấm ]' : 'chưa hiệu chỉnh'; }
+  if (e.key === '[') captureRef('left');
+  if (e.key === ']') captureRef('right');
+  if (k === 's' && calib.on) applyCalib();
 });
 
 setInterval(() => {
@@ -470,7 +523,9 @@ setInterval(() => {
     `NDI ${ndiRunning ? 'ON 5×[' + walls.map(w => w.cropW + 'x' + dh).join(' ') + ']' : 'OFF' + (ndiError ? ' (' + ndiError + ')' : '')}\n` +
     `OSC :${cfg.osc?.port ?? '—'}  pkts:${tracker.packets}  last:${tracker.lastAddress}\n` +
     `touches/wall: ${tracker.counts.join(' ')}   tracked:${tracker.active}   coral:${coral.count}\n` +
-    `[h]=hud  [c]=xoá mặt nước  [b]=thả 1 giọt  ·  kéo chuột = 1 chạm giả`;
+    `calib ${calib.on ? 'ON' : 'off'}  ${walls.map((w, i) => `W${i + 1}:${w.uScale.toFixed(3)}/${w.uOffset.toFixed(3)}`).join(' ')}\n` +
+    `        ${calibMsg}\n` +
+    `[h]=hud  [c]=xoá  [b]=giọt  [k]=hiệu chỉnh  [ ] =bắt vạch  [s]=lưu  ·  kéo chuột = chạm giả`;
 }, 250);
 
 // Health line every 5 s — on the show machine the HUD is on a projector nobody can
@@ -521,11 +576,14 @@ function frame() {
   fish.update(dt, liveHands);
   coral.update(dt, (x, y, col, amt, rad) => waves.deposit(x, y, col, amt, rad));
 
+  calib.build(liveHands, PX_W);
+
   waves.step(dt);
   waves.render();
   motes.draw();          // additive, on top of the graded image — NDI picks it up too
   fish.draw();
   bubbles.draw();
+  calib.draw();          // on top of everything — it has to be readable from the room
 
   if (ndiRunning) {
     ndiAccum += dt;
