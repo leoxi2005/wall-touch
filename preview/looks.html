@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>WALL TOUCH — 3 hướng visual</title>
+<style>
+  :root { color-scheme: dark; }
+  html,body { margin:0; background:#07080c; color:#c8d4e4;
+    font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .wrap { max-width:1500px; margin:0 auto; padding:18px 20px 40px; }
+  h1 { font-size:15px; font-weight:600; letter-spacing:.14em; color:#8fb8dd; margin:0 0 4px; }
+  .sub { color:#5d6b80; margin:0 0 16px; }
+  canvas { display:block; width:100%; border-radius:6px; background:#000; cursor:crosshair;
+           touch-action:none; }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:14px 0 10px; }
+  button { font:inherit; color:#b9c9dc; background:#131722; border:1px solid #26304a;
+           padding:7px 14px; border-radius:5px; cursor:pointer; }
+  button:hover { border-color:#3d5686; color:#e6f0fb; }
+  button.on { background:#1d2942; border-color:#5b83c8; color:#eaf3ff; }
+  .desc { color:#7e8ea6; margin:12px 0 0; max-width:78ch; }
+  .desc b { color:#a9c4e2; font-weight:600; }
+  kbd { background:#161c29; border:1px solid #2a3550; border-radius:4px; padding:1px 6px; color:#9fb4cf; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>WALL TOUCH — thử 3 hướng visual</h1>
+  <p class="sub">Rê chuột / kéo trên khung để giả làm bàn tay chạm tường. Có 2 "người" tự chạy sẵn.</p>
+
+  <div class="bar">
+    <button data-look="0" class="on">1 · SÓNG GIAO THOA</button>
+    <button data-look="1">2 · MÀNG TẾ BÀO</button>
+    <button data-look="2">3 · SỢI TỪ TRƯỜNG</button>
+    <span style="flex:1"></span>
+    <button id="viewBtn">Đang xem: 1 TƯỜNG (560×240)</button>
+  </div>
+
+  <canvas id="c"></canvas>
+  <p class="desc" id="desc"></p>
+</div>
+
+<script>
+const DESCS = [
+  '<b>SÓNG GIAO THOA</b> — cả phòng là một mặt nước phẳng nhìn từ trên, vẽ bằng đường đồng mức mảnh. Chạm = một nguồn sóng: vòng sóng lan ra thật, gặp sóng người khác thì giao thoa (chỗ gặp nhau nổi vân moiré). Buông tay thì sóng còn lan tiếp rồi tắt dần. Ít màu, nhiều đường — nhìn sạch và đắt tiền, đọc rõ từ xa.',
+  '<b>MÀNG TẾ BÀO</b> — một tấm màng chia thành hàng nghìn ô đa giác phát sáng, trôi rất chậm. Chạm = các ô quanh tay bị đẩy giãn ra, viền ô bật sáng, rồi một xung sáng chạy lan sang các ô bên cạnh như tín hiệu truyền qua mạng. Cảm giác "sinh học + máy móc".',
+  '<b>SỢI TỪ TRƯỜNG</b> — hàng nghìn sợi sáng mảnh chảy ngang tường như mạt sắt trong từ trường. Chạm = tay thành một cực hút, các sợi uốn cong xoáy quanh tay; quẹt = kéo cả bó sợi chạy theo. Mềm, ảo, không có đường thẳng nào.'
+];
+
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl2', { alpha:false, antialias:false });
+if (!gl) { document.body.innerHTML = '<p style="padding:40px">Trình duyệt không có WebGL2.</p>'; }
+
+const VS = `#version 300 es
+layout(location=0) in vec2 a; out vec2 vUv;
+void main(){ vUv = a*0.5+0.5; gl_Position = vec4(a,0.,1.); }`;
+
+// Shared preamble. Everything works in PANORAMA space: uv.x spans all five walls
+// (0..1 = 23 m around the pentagon), uv.y spans the 2.4 m height. uView maps the part
+// of the panorama currently on screen, so a look tuned here behaves identically when
+// the app renders the full 10350×1080.
+const HEAD = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 o;
+uniform float uT;
+uniform float uAspect;        // panorama aspect (10350/1080)
+uniform vec2  uView;          // .x = width of the visible slice, .y = left edge
+uniform vec4  uP[4];          // touches: xy = panorama uv, z = strength, w = age (s)
+uniform vec4  uV[4];          // .xy = velocity (uv/s), .z = alive
+uniform int   uN;
+
+float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float vn(vec2 x){ vec2 i=floor(x),f=fract(x); vec2 u=f*f*(3.-2.*f);
+  return mix(mix(h21(i),h21(i+vec2(1,0)),u.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),u.x),u.y); }
+float fbm(vec2 x){ float s=0.,a=.5; for(int i=0;i<5;i++){ s+=a*vn(x); x*=2.03; a*=.5; } return s; }
+
+// Panorama uv → "wall-height" units, the only space where a circle is a circle.
+vec2 toM(vec2 uv){ return vec2(uv.x*uAspect, uv.y); }
+// Shortest distance in a domain that wraps around the pentagon.
+float dxWrap(float dx){ return dx - floor(dx + 0.5); }
+`;
+
+const LOOKS = [
+// ---------------------------------------------------------------- 1. interference
+HEAD + `
+void main(){
+  vec2 uv = vec2(uView.y + vUv.x*uView.x, vUv.y);
+  vec2 p = toM(uv);
+
+  // Resting swell: two long waves crossing plus a slow drift, so the surface is alive
+  // before anyone touches it but has no features that read as "a shape".
+  float f = 0.0;
+  f += sin(p.x*0.55 + uT*0.13)*0.55;
+  f += sin(p.y*1.35 - uT*0.09 + sin(p.x*0.21)*1.4)*0.42;
+  f += (fbm(p*0.42 + vec2(uT*0.020, uT*0.014)) - 0.5)*1.35;
+  f += (fbm(p*1.25 - vec2(uT*0.035, 0.0)) - 0.5)*0.42;   // finer relief, so the map has
+                                                          // small features as well as swells
+
+  // Each hand is a real wave SOURCE: a ring travelling outward at a fixed speed, with
+  // the wavefront where the touch started. Two people therefore interfere properly —
+  // the moiré between their rings is physics, not an effect.
+  float near = 0.0;
+  vec3 tintSum = vec3(0.0); float tintW = 0.0;
+  for (int i=0;i<4;i++){
+    if (i>=uN) break;
+    vec2 d = vec2(dxWrap(uv.x - uP[i].x)*uAspect, uv.y - uP[i].y);
+    float r = length(d);
+    float age = uP[i].w;
+    float front = age*1.9;                       // wavefront radius, metres-ish
+    float ring = sin(r*11.0 - uT*7.0);
+    float env = exp(-max(0.0, r-front)*7.0) * exp(-r*0.42) * uP[i].z;
+    f += ring*env*0.95;
+    near = max(near, exp(-r*r*3.2)*uP[i].z);
+    vec3 tc = 0.5 + 0.5*cos(6.2831*(float(i)*0.27) + vec3(0.0,2.1,4.2));
+    tintSum += tc*env; tintW += env;
+  }
+
+  // Contour extraction. fwidth keeps every line exactly one pixel wide no matter how
+  // steep the field gets — without it the crowded areas turn into grey mush, which is
+  // what makes most iso-line visuals look cheap.
+  float n = 34.0;
+  float v = f*n;
+  float w = fwidth(v);
+  float minor = 1.0 - smoothstep(0.6*w, 1.5*w, abs(fract(v)-0.5));
+  float vm = f*n/5.0;
+  float wm = fwidth(vm);
+  float major = 1.0 - smoothstep(0.6*wm, 1.5*wm, abs(fract(vm)-0.5));
+
+  vec3 cold = vec3(0.16,0.44,0.78);
+  vec3 hot  = vec3(0.72,0.93,1.0);
+  vec3 c = cold*minor*0.55 + hot*major*0.85;
+  c += hot*minor*major*0.5;
+
+  // Glow: a second, blurred read of the same lines. Cheap depth without a bloom pass.
+  c += cold*exp(-abs(fract(v)-0.5)*7.0)*0.10;
+
+  vec3 tint = tintW > 0.001 ? tintSum/tintW : vec3(0.5,0.8,1.0);
+  c = mix(c, tint*(minor*0.9 + major*1.5), clamp(near*1.3,0.0,0.9));
+  c += tint*near*0.16;
+
+  c += vec3(0.03,0.06,0.12)*0.55;                 // never pure black
+  c *= mix(1.0, smoothstep(0.0,0.10,vUv.y)*smoothstep(0.0,0.09,1.0-vUv.y), 0.35);
+  o = vec4(pow(clamp(c,0.0,1.0), vec3(0.92)), 1.0);
+}`,
+
+// ---------------------------------------------------------------- 2. cell membrane
+HEAD + `
+// Voronoi returning both the distance to the nearest edge and a per-cell id.
+vec3 vor(vec2 x, float t){
+  vec2 n = floor(x), f = fract(x);
+  vec2 mg, mr; float md = 8.0;
+  for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++){
+    vec2 g = vec2(float(i),float(j));
+    vec2 rnd = vec2(h21(n+g), h21(n+g+31.7));
+    vec2 op = g + 0.5 + 0.42*sin(t*0.35 + 6.2831*rnd);
+    vec2 r = op - f;
+    float d = dot(r,r);
+    if(d<md){ md=d; mr=r; mg=g; }
+  }
+  // Second pass for the true edge distance (F2-F1 style), which is what gives a clean
+  // constant-width border instead of a fat blob at the cell centres.
+  md = 8.0;
+  for(int j=-2;j<=2;j++) for(int i=-2;i<=2;i++){
+    vec2 g = mg + vec2(float(i),float(j));
+    vec2 rnd = vec2(h21(n+g), h21(n+g+31.7));
+    vec2 op = g + 0.5 + 0.42*sin(t*0.35 + 6.2831*rnd);
+    vec2 r = op - f;
+    if(dot(mr-r,mr-r) > 0.0001)
+      md = min(md, dot(0.5*(mr+r), normalize(r-mr)));
+  }
+  return vec3(md, h21(n+mg), h21(n+mg+7.3));
+}
+
+void main(){
+  vec2 uv = vec2(uView.y + vUv.x*uView.x, vUv.y);
+  vec2 p = toM(uv);
+
+  float push = 0.0, near = 0.0, sig = 0.0;
+  vec3 tintSum = vec3(0.0); float tintW = 0.0;
+  for(int i=0;i<4;i++){
+    if(i>=uN) break;
+    vec2 d = vec2(dxWrap(uv.x - uP[i].x)*uAspect, uv.y - uP[i].y);
+    float r = length(d);
+    float g = exp(-r*r*2.4)*uP[i].z;
+    // Cells are pushed OUT of the hand: the membrane stretches instead of the pattern
+    // sliding, which is the difference between "reactive" and "a texture with a hole".
+    p += normalize(d + 1e-5) * g * 0.26;
+    near = max(near, g);
+    // Signal pulse: a ring of excitation racing outward along the membrane.
+    float front = uP[i].w*2.4;
+    sig = max(sig, exp(-abs(r-front)*3.2) * exp(-r*0.30) * uP[i].z);
+    vec3 tc = 0.5+0.5*cos(6.2831*(float(i)*0.27)+vec3(0.0,2.1,4.2));
+    tintSum += tc*(g+sig); tintW += g+sig;
+  }
+
+  vec3 V = vor(p*12.0, uT);
+  float edge = V.x;
+  float border = 1.0 - smoothstep(0.006, 0.030, edge);
+  float glow   = exp(-edge*20.0);
+
+  // Cell fill: each cell breathes on its own clock, so the sheet never pulses as one
+  // flat surface.
+  float fill = 0.5 + 0.5*sin(uT*0.7 + V.y*20.0);
+  fill *= 0.06 + 0.05*V.z;
+
+  vec3 cold = vec3(0.20,0.52,0.85);
+  vec3 c = cold*border*0.9 + cold*glow*0.22 + cold*fill;
+
+  vec3 tint = tintW>0.001 ? tintSum/tintW : vec3(0.4,0.8,1.0);
+  c += tint*(border*1.5 + glow*0.5)*clamp(sig*1.6,0.0,1.4);
+  c = mix(c, tint*(border*1.8 + glow*0.6 + 0.05), clamp(near*1.2,0.0,0.85));
+
+  c += vec3(0.03,0.06,0.12)*0.5;
+  c *= mix(1.0, smoothstep(0.0,0.10,vUv.y)*smoothstep(0.0,0.09,1.0-vUv.y), 0.35);
+  o = vec4(pow(clamp(c,0.0,1.0), vec3(0.92)), 1.0);
+}`,
+
+// ---------------------------------------------------------------- 3. field filaments
+HEAD + `
+// Streamline density: ridged noise sheared along the flow direction reads as a bundle
+// of separate hairs rather than a cloud. Two octaves at different scales give the fine
+// strands and the coarse bundles they group into.
+float strands(vec2 q){
+  float a = abs(sin(q.y*46.0 + fbm(q*1.6)*8.0));
+  float b = abs(sin(q.y*17.0 + fbm(q*0.7)*6.0));
+  return pow(1.0-a, 22.0)*0.75 + pow(1.0-b, 12.0)*0.45;
+}
+
+void main(){
+  vec2 uv = vec2(uView.y + vUv.x*uView.x, vUv.y);
+  vec2 p = toM(uv);
+
+  // Base flow: a slow horizontal drift warped by noise — iron filings in a lazy field.
+  vec2 q = p;
+  q += vec2(uT*0.06, 0.0);
+  q.y += (fbm(p*0.35 + vec2(uT*0.03,0.0)) - 0.5)*0.55;
+
+  float near = 0.0, spin = 0.0;
+  vec3 tintSum = vec3(0.0); float tintW = 0.0;
+  for(int i=0;i<4;i++){
+    if(i>=uN) break;
+    vec2 d = vec2(dxWrap(uv.x - uP[i].x)*uAspect, uv.y - uP[i].y);
+    float r = length(d) + 1e-4;
+    float g = uP[i].z / (1.0 + r*r*9.0);
+    // Attract + swirl. The perpendicular term is what wraps the strands AROUND the
+    // hand; pure attraction only makes them point at it, which looks like a hole.
+    q -= normalize(d)*g*0.34;
+    q += vec2(-d.y, d.x)/r * g * 0.42;
+    // A swipe drags the whole bundle: velocity smears the sampling along its direction.
+    q -= uV[i].xy*vec2(uAspect,1.0)*g*0.20;
+    near = max(near, exp(-r*r*3.0)*uP[i].z);
+    spin = max(spin, g);
+    vec3 tc = 0.5+0.5*cos(6.2831*(float(i)*0.27)+vec3(0.0,2.1,4.2));
+    tintSum += tc*g; tintW += g;
+  }
+
+  float s = strands(q);
+  float s2 = strands(q*1.9 + 13.0)*0.5;
+  float m = s + s2;
+
+  // Density varies slowly across the room so the sheet has thick and thin regions
+  // rather than one even mat of hair.
+  m *= 0.55 + 1.15*fbm(p*0.30 + vec2(uT*0.012, 0.0));
+  vec3 cold = vec3(0.20,0.48,0.95);
+  vec3 warm = vec3(0.80,0.95,1.0);
+  vec3 c = cold*m*1.5 + warm*pow(m,2.2)*1.5;
+
+  vec3 tint = tintW>0.001 ? tintSum/tintW : vec3(0.4,0.8,1.0);
+  c = mix(c, tint*(m*1.5 + pow(m,3.0)*1.6), clamp(spin*1.1,0.0,0.85));
+  c += tint*near*0.14;
+
+  c += vec3(0.03,0.06,0.12)*0.5;
+  c *= mix(1.0, smoothstep(0.0,0.10,vUv.y)*smoothstep(0.0,0.09,1.0-vUv.y), 0.35);
+  o = vec4(pow(clamp(c,0.0,1.0), vec3(0.92)), 1.0);
+}`
+];
+
+// ---------------------------------------------------------------- plumbing
+
+const ASPECT = 10350/1080;
+const WALL2 = 560/240;                 // one real wall, the view a visitor actually gets
+let viewFull = false;
+let look = 0;
+
+function compile(type, src){
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const progs = LOOKS.map(fs => {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, VS));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+});
+
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+const vbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0);
+gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+function resize(){
+  const w = canvas.clientWidth;
+  const view = viewFull ? ASPECT : WALL2;
+  const h = Math.round(w / view);
+  canvas.style.height = h + 'px';
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(w*dpr); canvas.height = Math.round(h*dpr);
+}
+window.addEventListener('resize', resize);
+
+// Two demo hands so the wall is never idle, plus the mouse as a third.
+const hands = [
+  { x:0.30, y:0.55, born:0, vx:0, vy:0, demo:true, ax:0.055, ay:0.13, sx:0.33, sy:0.55, ph:0.0 },
+  { x:0.62, y:0.47, born:0, vx:0, vy:0, demo:true, ax:0.040, ay:0.17, sx:0.24, sy:0.41, ph:2.4 }
+];
+let mouseHand = null;
+
+function viewSlice(){
+  const view = viewFull ? ASPECT : WALL2;
+  const w = view / ASPECT;               // fraction of the panorama on screen
+  return { w, x: viewFull ? 0 : 0.5 - w/2 };
+}
+function toPanorama(clientX, clientY){
+  const r = canvas.getBoundingClientRect();
+  const s = viewSlice();
+  return {
+    x: s.x + ((clientX - r.left)/r.width)*s.w,
+    y: 1 - (clientY - r.top)/r.height
+  };
+}
+canvas.addEventListener('pointerdown', e => {
+  const p = toPanorama(e.clientX, e.clientY);
+  mouseHand = { x:p.x, y:p.y, born:performance.now()/1000, vx:0, vy:0, demo:false };
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  const p = toPanorama(e.clientX, e.clientY);
+  if (mouseHand) {
+    mouseHand.vx = (p.x - mouseHand.x)*60; mouseHand.vy = (p.y - mouseHand.y)*60;
+    mouseHand.x = p.x; mouseHand.y = p.y;
+  } else {
+    // Hover also counts — nobody wants to hold the button down to evaluate a look.
+    mouseHand = { x:p.x, y:p.y, born:performance.now()/1000, vx:0, vy:0, demo:false, hover:true };
+  }
+});
+canvas.addEventListener('pointerleave', () => { if (mouseHand?.hover) mouseHand = null; });
+canvas.addEventListener('pointerup', () => { if (mouseHand) mouseHand.hover = true; });
+
+document.querySelectorAll('[data-look]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-look]').forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+  look = +b.dataset.look;
+  document.getElementById('desc').innerHTML = DESCS[look];
+}));
+document.getElementById('viewBtn').addEventListener('click', (e) => {
+  viewFull = !viewFull;
+  e.target.textContent = viewFull ? 'Đang xem: CẢ 5 TƯỜNG (10350×1080)' : 'Đang xem: 1 TƯỜNG (560×240)';
+  resize();
+});
+document.getElementById('desc').innerHTML = DESCS[0];
+
+const t0 = performance.now();
+const pArr = new Float32Array(16), vArr = new Float32Array(16);
+
+function frame(){
+  requestAnimationFrame(frame);
+  resize();
+  const t = (performance.now() - t0)/1000;
+
+  for (const h of hands) {
+    const nx = h.x + h.ax*Math.sin(t*h.sx + h.ph)*0.9;
+    const ny = h.y + h.ay*Math.sin(t*h.sy + h.ph*1.7);
+    h.vx = (nx - h.x)*60; h.vy = (ny - h.y)*60;
+    h.x = nx; h.y = ny;
+  }
+
+  const list = hands.concat(mouseHand ? [mouseHand] : []).slice(0,4);
+  pArr.fill(0); vArr.fill(0);
+  list.forEach((h,i) => {
+    // Age drives the expanding wavefront; demo hands are kept "just touched" on a loop
+    // so their rings keep coming.
+    const age = h.demo ? (t % 3.4) : Math.min(4.0, t - h.born);
+    pArr[i*4+0] = h.x; pArr[i*4+1] = h.y; pArr[i*4+2] = 1.0; pArr[i*4+3] = age;
+    vArr[i*4+0] = h.vx; vArr[i*4+1] = h.vy; vArr[i*4+2] = 1.0;
+  });
+
+  const prog = progs[look];
+  gl.useProgram(prog);
+  const s = viewSlice();
+  gl.uniform1f(gl.getUniformLocation(prog,'uT'), t);
+  gl.uniform1f(gl.getUniformLocation(prog,'uAspect'), ASPECT);
+  gl.uniform2f(gl.getUniformLocation(prog,'uView'), s.w, s.x);
+  gl.uniform4fv(gl.getUniformLocation(prog,'uP'), pArr);
+  gl.uniform4fv(gl.getUniformLocation(prog,'uV'), vArr);
+  gl.uniform1i(gl.getUniformLocation(prog,'uN'), list.length);
+
+  gl.viewport(0,0,canvas.width,canvas.height);
+  gl.bindVertexArray(vao);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+}
+resize();
+frame();
+</script>
+</body>
+</html>

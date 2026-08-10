@@ -1,0 +1,46 @@
+{
+  "name": "wall-touch",
+  "version": "0.1.0",
+  "description": "WALL TOUCH — ink-in-water fluid wall driven by Hokuyo LiDAR touches. Electron + WebGL2, 5× NDI Out, OSC In. Same room/NDI names as Door Portals.",
+  "main": "main.js",
+  "author": "LEOXI",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.leoxi.walltouch",
+    "productName": "Wall Touch",
+    "directories": { "output": "release", "buildResources": "build" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "config.json",
+      "index.html",
+      "ndi/**/*",
+      "osc/**/*",
+      "src/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/@stagetimerio/grandiose/**"
+    ],
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": ["nsis", "zip"]
+    }
+  },
+  "dependencies": {
+    "@stagetimerio/grandiose": "^0.2.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  }
+}

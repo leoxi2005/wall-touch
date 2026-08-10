@@ -1,0 +1,121 @@
+{
+  "output": {
+    "width": 10350,
+    "height": 1080,
+    "fps": 30,
+    "renderScale": 1.0,
+    "maxFps": 60,
+    "kiosk": false
+  },
+  "ndi": {
+    "enabled": true,
+    "pbo": 4
+  },
+  "walls": [
+    {
+      "px": 810,
+      "wcm": 180,
+      "hcm": 240,
+      "oscPort": 9001,
+      "doors": [
+        0.5
+      ]
+    },
+    {
+      "px": 2520,
+      "wcm": 560,
+      "hcm": 240,
+      "oscPort": 9002,
+      "doors": [
+        0.2063,
+        0.5,
+        0.7938
+      ]
+    },
+    {
+      "px": 1980,
+      "wcm": 440,
+      "hcm": 240,
+      "oscPort": 9003,
+      "doors": [
+        0.2962,
+        0.7038
+      ]
+    },
+    {
+      "px": 2250,
+      "wcm": 500,
+      "hcm": 240,
+      "oscPort": 9004,
+      "doors": [
+        0.201,
+        0.5,
+        0.799
+      ]
+    },
+    {
+      "px": 2790,
+      "wcm": 620,
+      "hcm": 240,
+      "oscPort": 9005,
+      "doors": [
+        0.2105,
+        0.5,
+        0.7895
+      ]
+    }
+  ],
+  "osc": {
+    "port": 7000,
+    "pointRule": "^/tuong(\\d+)/p(\\d+)/(on|x|y|v|id)$",
+    "countRule": "^/tuong(\\d+)/count$",
+    "flipY": true,
+    "trackTimeout": 0.5
+  },
+  "look": {
+    "exposure": 1.25,
+    "bloomStrength": 0.5,
+    "bloomThreshold": 0.35,
+    "bloomIters": 4,
+    "lineCold": [
+      0.16,
+      0.44,
+      0.78
+    ],
+    "lineHot": [
+      0.72,
+      0.93,
+      1.0
+    ],
+    "lineGlow": 0.1,
+    "trailGlow": 0.16,
+    "backgroundLevel": 0.028,
+    "grain": 0.01,
+    "vignette": 0.2
+  },
+  "idle": {
+    "afterSeconds": 18,
+    "intervalSeconds": 4.5,
+    "strength": 0.6
+  },
+  "waves": {
+    "simHeight": 320,
+    "substeps": 3,
+    "k": 0.42,
+    "damping": 0.9993,
+    "impulseRadius": 0.03,
+    "trailRadius": 0.045,
+    "dropAmp": 0.55,
+    "ringAmp": 0.22,
+    "ringInterval": 0.5,
+    "wakeAmp": 0.9,
+    "trailRate": 0.55,
+    "trailHold": 7.0,
+    "trailCap": 1.0,
+    "contours": 26,
+    "majorEvery": 5,
+    "baseAmp": 1.0,
+    "waveGain": 1.0,
+    "trailGain": 1.0
+  }
+}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>WALL TOUCH</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    body { display: flex; align-items: center; justify-content: center; }
+    #stage { width: 100%; display: block; }
+    canvas { display: block; width: 100%; height: auto; }
+    #hud {
+      position: fixed; left: 10px; top: 10px; z-index: 10;
+      font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #9fe8ff; text-shadow: 0 1px 3px #000; white-space: pre;
+      background: rgba(0,0,0,.42); padding: 7px 10px; border-radius: 6px;
+      pointer-events: none;
+    }
+    #hud.off { display: none; }
+    #boot { position: fixed; color: #567; font: 13px ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <div id="boot">WALL TOUCH — loading…</div>
+  <div id="stage"><canvas id="gl"></canvas></div>
+  <div id="hud"></div>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
