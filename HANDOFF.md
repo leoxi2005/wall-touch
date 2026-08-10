@@ -125,22 +125,40 @@ Thêm: **cảnh báo `READ-usage buffer ... discarded the shadow copy`** trong l
 
 Số đo tường lấy từ `config.json → walls` (giống Door Portals) — đổi `px` là crop NDI tự theo.
 
-## 7. Còn nợ
+## 7. Phát hành
+
+- Repo public: **github.com/leoxi2005/wall-touch** (`gh` đang đăng nhập `leoxi2005`).
+- **v1.0.0** — macOS `.dmg` build tại máy này, Windows `.exe`/`.zip` do CI build và tự
+  đính vào release của tag. Ra bản mới:
+
+```
+# sửa code → bump "version" trong package.json
+git add -A && git commit -m "..." && git push
+npm run build:mac
+gh release create v1.0.1 "release/Wall Touch-1.0.1-arm64.dmg#macOS (Apple Silicon) .dmg" \
+   --title "Wall Touch v1.0.1" --notes "..."
+# → tag tự kích CI Windows, .exe + .zip tự đính vào cùng release
+```
+
+- Mac build **chưa ký** → mở lần đầu phải chuột phải → Open.
+- **Trước khi phát hành nhớ kiểm bản đóng gói**, đừng tin bản `npm start`:
+  `npx electron-builder --mac --dir` rồi chạy
+  `SNAP_DIR=… DEMO=1 RENDER_SCALE=0.3 "release/mac-arm64/Wall Touch.app/Contents/MacOS/Wall Touch"`
+  — phải thấy `[ndi] senders started` và ảnh snap **không đen** (đo: >20% pixel sáng).
+  Đây chính là cái bẫy đã hạ Door Portals v1.0.3.
+
+## 8. Còn nợ
 
 1. **Chưa chạy thử với LiDAR thật.** Cần: bật bridge (preset cũ, không sửa) → `npm start` →
    bấm `h`, xem `pkts` tăng và `touches/wall` đúng → chạm cửa **trái tường 2** xem vệt hiện
    bên trái hay phải (nếu ngược thì trục +x của sensor đó lật — xử ở bridge, không sửa app).
 2. **Chưa đo ở full 10350×1080 trên máy show.** Contour là shader full-res, cần xem fps thật.
    Nếu thiếu: hạ `waves.substeps` hoặc `look.bloomIters` trước, đừng hạ độ phân giải render.
-3. **Chưa đóng gói** (`npm run build:mac` / CI Windows). Windows cần build trên máy Windows vì
-   `grandiose` không cross-build được từ Mac — copy `.github/workflows/release.yml` của
-   Door Portals sang, kèm y nguyên các bẫy CI (`windows-2022`, Python 3.11, `softprops` upload).
-4. **`npm install` không tải nổi binary Electron** (giải nén hỏng, thiếu `Frameworks`). Đã vá bằng
+3. **`npm install` không tải nổi binary Electron** (giải nén hỏng, thiếu `Frameworks`). Đã vá bằng
    cách copy `node_modules/electron/dist` + `path.txt` từ `~/door-portals`. Máy mới mà lỗi lại
    thì làm y vậy.
-5. Chưa có repo GitHub — mới commit local.
 
-## 8. Quy tắc tiết kiệm credit
+## 9. Quy tắc tiết kiệm credit
 
 Giống Door Portals: **không tự chụp screenshot**. Muốn xem thì
 `mkdir -p $SNAP_DIR && SNAP_DIR=… SNAP_AT=7000,13000 DEMO=1 RENDER_SCALE=0.35 npm start`,
@@ -148,7 +166,7 @@ cắt dải canvas ra khỏi ảnh cửa sổ (canvas nằm giữa, cao đúng `
 **chỉ đưa 1 ảnh khi cần quyết định**. Gộp nhiều chỉnh vào 1 lần rồi mới render.
 `zsh` không có `timeout` → chạy nền rồi `pkill -f "wall-touch/node_modules/electron"`.
 
-## 9. Trang so sánh hướng visual
+## 10. Trang so sánh hướng visual
 
 `preview/looks.html` — mở thẳng bằng trình duyệt, không cần Electron. 3 hướng
 (sóng giao thoa / màng tế bào / sợi từ trường), rê chuột để giả làm tay, có nút xem
